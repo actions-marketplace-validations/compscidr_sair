@@ -13,7 +13,25 @@ import (
 	"github.com/compscidr/sair/internal/version"
 )
 
+const usage = `Usage: sair-proxy [--version | --help]
+
+The SAIR ADB proxy. Takes no arguments; it is configured through env vars:
+
+  SAIR_API_KEY                API key for the orchestrator (default: dev-key-123)
+  SAIR_GUEST_API_KEYS         Comma-separated keys of accounts that may lock this proxy's devices
+  ORCHESTRATOR_ADDR           Orchestrator gRPC address (default: orchestrator.sair.run:9090)
+  ORCHESTRATOR_TLS            true/false (default: true for the hosted orchestrator, else false)
+  PROXY_ID                    Identity reported to the orchestrator (default: the hostname)
+  ADB_PROXY_PORT              Bare ADB port (default: 5037)
+  PROXY_HTTP_HOST             HTTP API bind host (default: 0.0.0.0)
+  PROXY_HTTP_PORT             HTTP API port (default: 8550)
+  HEARTBEAT_INTERVAL_SECONDS  Lock heartbeat interval (default: 60)
+  SAIR_AUTO_UPDATE            false disables updating to the latest release on start
+  GITHUB_TOKEN                Optional token for the auto-updater's GitHub API calls
+`
+
 func main() {
+	version.HandleArgs(usage)
 	updater.CheckAndUpdate("sair-proxy")
 
 	port := envInt("ADB_PROXY_PORT", 5037)

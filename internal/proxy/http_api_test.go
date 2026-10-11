@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compscidr/sair/internal/version"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -244,5 +245,21 @@ func TestHTTPApiAcquireForwardsGuestKey(t *testing.T) {
 				t.Errorf("got tenant_api_key %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHTTPApiStatusReportsVersion(t *testing.T) {
+	api := &HTTPApi{apiKey: "test-key", scopedPortManager: NewScopedPortManager(&CommandRouter{}, nil, 0)}
+	req := httptest.NewRequest("GET", "/status", nil)
+	req.Header.Set("x-api-key", "test-key")
+	w := httptest.NewRecorder()
+	api.handleStatus(w, req)
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["version"] != version.Version {
+		t.Errorf("version = %v, want %q", resp["version"], version.Version)
 	}
 }

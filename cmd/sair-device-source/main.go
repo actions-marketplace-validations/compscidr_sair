@@ -22,7 +22,25 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+const usage = `Usage: sair-device-source [--version | --help]
+
+The SAIR device source. Takes no arguments; it is configured through env vars:
+
+  SAIR_API_KEY                  API key sent with device reports (default: dev-key-123)
+  PROXY_ADDR                    Proxy HTTP API to report devices to (default: http://localhost:8550)
+  DEVICE_SOURCE_PORT            gRPC port (default: 8080)
+  DEVICE_SOURCE_ADDR            Address the proxy dials back (default: localhost:<DEVICE_SOURCE_PORT>)
+  ADB_PORT                      Real ADB server port (default: 5038)
+  WIFI_SSID                     Bench Wi-Fi network; empty means Wi-Fi is not managed
+  WIFI_PASSPHRASE               Bench Wi-Fi passphrase; empty for an open network
+  WIFI_PING_HOST                Host a phone must ping before it is handed over (default: 8.8.8.8)
+  WIFI_CONNECT_TIMEOUT_SECONDS  How long to wait for that (default: 60)
+  SAIR_AUTO_UPDATE              false disables updating to the latest release on start
+  GITHUB_TOKEN                  Optional token for the auto-updater's GitHub API calls
+`
+
 func main() {
+	version.HandleArgs(usage)
 	updater.CheckAndUpdate("sair-device-source")
 
 	slog.Info("DeviceSource starting...", "version", version.Version)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/compscidr/sair/internal/version"
 	pb "github.com/compscidr/sair/proto/orchestrator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -316,7 +317,7 @@ func (a *HTTPApi) handleStatus(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"scoped_ports": portInfos})
+	writeJSON(w, http.StatusOK, map[string]any{"scoped_ports": portInfos, "version": version.Version})
 }
 
 type deviceReport struct {
