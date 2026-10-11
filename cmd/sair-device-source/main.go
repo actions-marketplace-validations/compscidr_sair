@@ -110,11 +110,12 @@ type deviceReport struct {
 }
 
 type deviceInfo struct {
-	Serial       string `json:"serial"`
-	Manufacturer string `json:"manufacturer"`
-	Model        string `json:"model"`
-	Sdk          int32  `json:"sdk"`
-	Release      int32  `json:"release"`
+	Serial       string   `json:"serial"`
+	Manufacturer string   `json:"manufacturer"`
+	Model        string   `json:"model"`
+	Sdk          int32    `json:"sdk"`
+	Release      int32    `json:"release"`
+	AccountTypes []string `json:"account_types,omitempty"`
 }
 
 func reportDevices(dsServer *devicesource.Server, proxyAddr, sourceAddr, apiKey string, stop chan struct{}) {
@@ -137,6 +138,7 @@ func reportDevices(dsServer *devicesource.Server, proxyAddr, sourceAddr, apiKey 
 				Model:        d.Model,
 				Sdk:          d.Sdk,
 				Release:      d.Release,
+				AccountTypes: d.AccountTypes,
 			})
 		}
 

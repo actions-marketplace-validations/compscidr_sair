@@ -219,13 +219,18 @@ func (x *DeviceSourceInfo) GetDevices() []*DeviceInfo {
 }
 
 type DeviceInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Serial        string                 `protobuf:"bytes,1,opt,name=serial,proto3" json:"serial,omitempty"`
-	Manufacturer  string                 `protobuf:"bytes,2,opt,name=manufacturer,proto3" json:"manufacturer,omitempty"`
-	Model         string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
-	Sdk           int32                  `protobuf:"varint,4,opt,name=sdk,proto3" json:"sdk,omitempty"`
-	Release       int32                  `protobuf:"varint,5,opt,name=release,proto3" json:"release,omitempty"`
-	Busy          bool                   `protobuf:"varint,6,opt,name=busy,proto3" json:"busy,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Serial       string                 `protobuf:"bytes,1,opt,name=serial,proto3" json:"serial,omitempty"`
+	Manufacturer string                 `protobuf:"bytes,2,opt,name=manufacturer,proto3" json:"manufacturer,omitempty"`
+	Model        string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	Sdk          int32                  `protobuf:"varint,4,opt,name=sdk,proto3" json:"sdk,omitempty"`
+	Release      int32                  `protobuf:"varint,5,opt,name=release,proto3" json:"release,omitempty"`
+	Busy         bool                   `protobuf:"varint,6,opt,name=busy,proto3" json:"busy,omitempty"`
+	// Distinct types of the accounts signed in on the device (e.g. com.google),
+	// sorted; never their names. Whoever locks the device can use those accounts,
+	// so the portal warns before it is shared. Empty when none are found, or from
+	// device sources that predate the field.
+	AccountTypes  []string `protobuf:"bytes,7,rep,name=account_types,json=accountTypes,proto3" json:"account_types,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -300,6 +305,13 @@ func (x *DeviceInfo) GetBusy() bool {
 		return x.Busy
 	}
 	return false
+}
+
+func (x *DeviceInfo) GetAccountTypes() []string {
+	if x != nil {
+		return x.AccountTypes
+	}
+	return nil
 }
 
 // A lock request either names the devices it wants (serials) or asks for a
@@ -1663,7 +1675,7 @@ const file_proto_orchestrator_orchestrator_proto_rawDesc = "" +
 	"\tsource_id\x18\x01 \x01(\tR\bsourceId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x16\n" +
 	"\x06online\x18\x03 \x01(\bR\x06online\x122\n" +
-	"\adevices\x18\x04 \x03(\v2\x18.orchestrator.DeviceInfoR\adevices\"\x9e\x01\n" +
+	"\adevices\x18\x04 \x03(\v2\x18.orchestrator.DeviceInfoR\adevices\"\xc3\x01\n" +
 	"\n" +
 	"DeviceInfo\x12\x16\n" +
 	"\x06serial\x18\x01 \x01(\tR\x06serial\x12\"\n" +
@@ -1671,7 +1683,8 @@ const file_proto_orchestrator_orchestrator_proto_rawDesc = "" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12\x10\n" +
 	"\x03sdk\x18\x04 \x01(\x05R\x03sdk\x12\x18\n" +
 	"\arelease\x18\x05 \x01(\x05R\arelease\x12\x12\n" +
-	"\x04busy\x18\x06 \x01(\bR\x04busy\"\xed\x01\n" +
+	"\x04busy\x18\x06 \x01(\bR\x04busy\x12#\n" +
+	"\raccount_types\x18\a \x03(\tR\faccountTypes\"\xed\x01\n" +
 	"\x12AcquireLockRequest\x12\x18\n" +
 	"\aserials\x18\x01 \x03(\tR\aserials\x12\x12\n" +
 	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x14\n" +
