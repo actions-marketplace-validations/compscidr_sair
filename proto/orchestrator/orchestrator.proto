@@ -64,6 +64,11 @@ message AcquireLockRequest {
   // stays on the owner's proxy and in the owner's lock domain. Empty for the
   // owner's own locks and from proxies that predate guest keys.
   string tenant_api_key = 8;
+  // Grant every device from a single proxy, waiting until one proxy has
+  // enough free, for tests whose phones must sit together (BLE, Wi-Fi Direct,
+  // adb reverse). False keeps the cross-proxy pick. Ignored by orchestrators
+  // that predate it.
+  bool same_proxy = 9;
 }
 
 message AcquireLockResponse {
