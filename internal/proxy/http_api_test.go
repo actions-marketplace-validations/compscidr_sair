@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -261,5 +262,19 @@ func TestHTTPApiStatusReportsVersion(t *testing.T) {
 	}
 	if resp["version"] != version.Version {
 		t.Errorf("version = %v, want %q", resp["version"], version.Version)
+	}
+}
+
+func TestHTTPApiDeviceReportCarriesAccountTypes(t *testing.T) {
+	tracker := newTestTracker()
+	api := &HTTPApi{apiKey: "test-key", deviceListTracker: tracker}
+	body := `{"source_addr":"src","devices":[{"serial":"SER","account_types":["com.google"]}]}`
+	req := httptest.NewRequest("POST", "/internal/devices", strings.NewReader(body))
+	req.Header.Set("x-api-key", "test-key")
+	api.handleRegisterDevices(httptest.NewRecorder(), req)
+
+	devices := tracker.GetDevices()
+	if len(devices) != 1 || !slices.Equal(devices[0].AccountTypes, []string{"com.google"}) {
+		t.Errorf("devices = %v", devices)
 	}
 }

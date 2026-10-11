@@ -42,6 +42,11 @@ message DeviceInfo {
   int32 sdk = 4;
   int32 release = 5;
   bool busy = 6;
+  // Distinct types of the accounts signed in on the device (e.g. com.google),
+  // sorted; never their names. Whoever locks the device can use those accounts,
+  // so the portal warns before it is shared. Empty when none are found, or from
+  // device sources that predate the field.
+  repeated string account_types = 7;
 }
 
 // A lock request either names the devices it wants (serials) or asks for a

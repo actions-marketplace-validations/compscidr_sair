@@ -172,12 +172,15 @@ func (x *Devices) GetDevices() []*Device {
 }
 
 type Device struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Serial        string                 `protobuf:"bytes,1,opt,name=serial,proto3" json:"serial,omitempty"`
-	Manufacturer  string                 `protobuf:"bytes,2,opt,name=manufacturer,proto3" json:"manufacturer,omitempty"`
-	Model         string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
-	Release       int32                  `protobuf:"varint,4,opt,name=release,proto3" json:"release,omitempty"`
-	Sdk           int32                  `protobuf:"varint,5,opt,name=sdk,proto3" json:"sdk,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Serial       string                 `protobuf:"bytes,1,opt,name=serial,proto3" json:"serial,omitempty"`
+	Manufacturer string                 `protobuf:"bytes,2,opt,name=manufacturer,proto3" json:"manufacturer,omitempty"`
+	Model        string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	Release      int32                  `protobuf:"varint,4,opt,name=release,proto3" json:"release,omitempty"`
+	Sdk          int32                  `protobuf:"varint,5,opt,name=sdk,proto3" json:"sdk,omitempty"`
+	// Distinct types of the accounts signed in on the device (e.g. com.google),
+	// sorted; never their names. Empty when none are found.
+	AccountTypes  []string `protobuf:"bytes,6,rep,name=account_types,json=accountTypes,proto3" json:"account_types,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -245,6 +248,13 @@ func (x *Device) GetSdk() int32 {
 		return x.Sdk
 	}
 	return 0
+}
+
+func (x *Device) GetAccountTypes() []string {
+	if x != nil {
+		return x.AccountTypes
+	}
+	return nil
 }
 
 type Command struct {
@@ -566,13 +576,14 @@ const file_proto_devicesource_devicesource_proto_rawDesc = "" +
 	"\x03OFF\x10\x01\x12\x06\n" +
 	"\x02ON\x10\x02\"9\n" +
 	"\aDevices\x12.\n" +
-	"\adevices\x18\x01 \x03(\v2\x14.devicesource.DeviceR\adevices\"\x86\x01\n" +
+	"\adevices\x18\x01 \x03(\v2\x14.devicesource.DeviceR\adevices\"\xab\x01\n" +
 	"\x06Device\x12\x16\n" +
 	"\x06serial\x18\x01 \x01(\tR\x06serial\x12\"\n" +
 	"\fmanufacturer\x18\x02 \x01(\tR\fmanufacturer\x12\x14\n" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12\x18\n" +
 	"\arelease\x18\x04 \x01(\x05R\arelease\x12\x10\n" +
-	"\x03sdk\x18\x05 \x01(\x05R\x03sdk\"\x1b\n" +
+	"\x03sdk\x18\x05 \x01(\x05R\x03sdk\x12#\n" +
+	"\raccount_types\x18\x06 \x03(\tR\faccountTypes\"\x1b\n" +
 	"\aCommand\x12\x10\n" +
 	"\x03cmd\x18\x01 \x01(\tR\x03cmd\"j\n" +
 	"\rDeviceCommand\x12\x16\n" +

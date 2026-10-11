@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	pb "github.com/compscidr/sair/proto/devicesource"
@@ -32,6 +33,10 @@ type Server struct {
 	wifiTimeout                            time.Duration
 	// shell runs a command line on a device; adbShell, swapped in tests.
 	shell func(ctx context.Context, serial, command string) (string, error)
+
+	// Account types per serial, refreshed every accountRefresh (see accountTypes).
+	accountsMu sync.Mutex
+	accounts   map[string]accountsEntry
 }
 
 func NewServer() *Server {
@@ -119,6 +124,7 @@ func (s *Server) getDeviceInfo(serial string) (*pb.Device, error) {
 		Model:        model,
 		Release:      int32(release),
 		Sdk:          int32(sdk),
+		AccountTypes: s.accountTypes(serial),
 	}, nil
 }
 

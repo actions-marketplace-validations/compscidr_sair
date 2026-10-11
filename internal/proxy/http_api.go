@@ -25,22 +25,22 @@ import (
 // device locks. The proxy handles all orchestrator communication and
 // opens scoped ADB ports for per-runner isolation.
 type HTTPApi struct {
-	scopedPortManager  *ScopedPortManager
-	deviceListTracker  *DeviceListTracker
-	apiKey             string
+	scopedPortManager *ScopedPortManager
+	deviceListTracker *DeviceListTracker
+	apiKey            string
 	// guestKeys are other tenants' API keys the owner lets lock this proxy's
 	// devices. The owner's proxy vouches for them: putting a key here is the
 	// owner's consent, no portal-side sharing is involved. See README.
-	guestKeys          []string
-	server             *http.Server
+	guestKeys []string
+	server    *http.Server
 }
 
 func NewHTTPApi(scopedPortManager *ScopedPortManager, deviceListTracker *DeviceListTracker, apiKey string, guestKeys []string, port int, host string) *HTTPApi {
 	api := &HTTPApi{
-		scopedPortManager:  scopedPortManager,
-		deviceListTracker:  deviceListTracker,
-		apiKey:             apiKey,
-		guestKeys:          guestKeys,
+		scopedPortManager: scopedPortManager,
+		deviceListTracker: deviceListTracker,
+		apiKey:            apiKey,
+		guestKeys:         guestKeys,
 	}
 
 	mux := http.NewServeMux()
@@ -326,11 +326,12 @@ type deviceReport struct {
 }
 
 type deviceInfo struct {
-	Serial       string `json:"serial"`
-	Manufacturer string `json:"manufacturer"`
-	Model        string `json:"model"`
-	Sdk          int32  `json:"sdk"`
-	Release      int32  `json:"release"`
+	Serial       string   `json:"serial"`
+	Manufacturer string   `json:"manufacturer"`
+	Model        string   `json:"model"`
+	Sdk          int32    `json:"sdk"`
+	Release      int32    `json:"release"`
+	AccountTypes []string `json:"account_types,omitempty"`
 }
 
 func (a *HTTPApi) handleRegisterDevices(w http.ResponseWriter, r *http.Request) {
@@ -358,6 +359,7 @@ func (a *HTTPApi) handleRegisterDevices(w http.ResponseWriter, r *http.Request) 
 			Model:        d.Model,
 			Sdk:          d.Sdk,
 			Release:      d.Release,
+			AccountTypes: d.AccountTypes,
 		})
 	}
 
