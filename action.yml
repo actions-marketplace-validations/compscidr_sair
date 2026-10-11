@@ -9,4 +9,9 @@ runs:
   using: composite
   steps:
     - shell: bash
-      run: echo "${GITHUB_ACTION_PATH}/tools" >> "$GITHUB_PATH"
+      env:
+        # What the tools' --version reports: the ref this action is used at.
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        echo "${GITHUB_ACTION_PATH}/tools" >> "$GITHUB_PATH"
+        echo "SAIR_TOOLS_VERSION=${ACTION_REF}" >> "$GITHUB_ENV"

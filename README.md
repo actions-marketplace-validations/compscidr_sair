@@ -263,6 +263,10 @@ eval $(sair-acquire --no-wifi)
 sair-wifi off
 sair-wifi on
 
+# Which release the tools (or a bench's binaries) came from
+sair-acquire --version
+sair-proxy --version   # also in the proxy's GET /status as "version"
+
 # Point to a remote proxy
 eval $(sair-acquire --url http://proxy-host:8550 --api-key my-key)
 

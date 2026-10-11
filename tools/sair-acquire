@@ -41,6 +41,8 @@
 #
 set -euo pipefail
 
+TOOLS_VERSION="dev" # release.yml stamps the release tag here
+
 PROXY_URL="${SAIR_PROXY_URL:-http://localhost:8550}"
 API_KEY="${SAIR_API_KEY:-dev-key-123}"
 SERIAL=""
@@ -94,8 +96,14 @@ while [[ $# -gt 0 ]]; do
             SAME_PROXY=1
             shift
             ;;
+        --version|-v)
+            # Stamped by release.yml; from the action, its ref; from a checkout at a tag, that tag.
+            [[ "$TOOLS_VERSION" != dev ]] || TOOLS_VERSION="${SAIR_TOOLS_VERSION:-$(git -C "$(dirname "$0")" describe --tags --exact-match 2>/dev/null || echo dev)}"
+            echo "$TOOLS_VERSION"
+            exit 0
+            ;;
         --help|-h)
-            echo "Usage: eval \$(sair-acquire [--serial SERIAL[,SERIAL...]] [--count N] [--url URL] [--api-key KEY] [--repo OWNER/NAME] [--run-url URL] [--priority N] [--no-wifi] [--same-proxy])" >&2
+            echo "Usage: eval \$(sair-acquire [--serial SERIAL[,SERIAL...]] [--count N] [--url URL] [--api-key KEY] [--repo OWNER/NAME] [--run-url URL] [--priority N] [--no-wifi] [--same-proxy] [--version])" >&2
             echo "" >&2
             echo "Acquires a device lock via the SAIR ADB proxy." >&2
             echo "Blocks until devices are available." >&2

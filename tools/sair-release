@@ -15,6 +15,8 @@
 #
 set -euo pipefail
 
+TOOLS_VERSION="dev" # release.yml stamps the release tag here
+
 PROXY_URL="${SAIR_PROXY_URL:-http://localhost:8550}"
 API_KEY="${SAIR_API_KEY:-dev-key-123}"
 LOCK_ID="${SAIR_LOCK_ID:-}"
@@ -41,8 +43,14 @@ while [[ $# -gt 0 ]]; do
             STATUS="$2"
             shift 2
             ;;
+        --version|-v)
+            # Stamped by release.yml; from the action, its ref; from a checkout at a tag, that tag.
+            [[ "$TOOLS_VERSION" != dev ]] || TOOLS_VERSION="${SAIR_TOOLS_VERSION:-$(git -C "$(dirname "$0")" describe --tags --exact-match 2>/dev/null || echo dev)}"
+            echo "$TOOLS_VERSION"
+            exit 0
+            ;;
         --help|-h)
-            echo "Usage: sair-release [--lock-id ID] [--url URL] [--api-key KEY] [--status success|failure|cancelled]" >&2
+            echo "Usage: sair-release [--lock-id ID] [--url URL] [--api-key KEY] [--status success|failure|cancelled] [--version]" >&2
             echo "" >&2
             echo "Releases a device lock acquired by sair-acquire." >&2
             echo "" >&2
