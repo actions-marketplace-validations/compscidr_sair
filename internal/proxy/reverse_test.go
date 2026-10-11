@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/compscidr/sair/internal/devicesource"
 	dspb "github.com/compscidr/sair/proto/devicesource"
@@ -161,5 +162,30 @@ func TestAdbReverseRefusedOnRelayedDevice(t *testing.T) {
 	reply, _ := io.ReadAll(client)
 	if !strings.HasPrefix(string(reply), "FAIL") || !strings.Contains(string(reply), "relayed from another proxy") {
 		t.Errorf("reply = %q", reply)
+	}
+}
+
+// The proxy reads a local device's service and sends it as the forward's
+// initial command, so the device source can log and watch it (sair#79).
+func TestLocalTunnelSendsTheServiceAsInitialCommand(t *testing.T) {
+	ds := &fakeDeviceSource{endsFirst: true}
+	addr, dial := startFakeDeviceSource(t, ds)
+	tracker := newTestTracker()
+	tracker.UpdateDevices(addr, []*pb.DeviceInfo{{Serial: "SER"}})
+	r := &CommandRouter{dsDialer: dial}
+
+	client, server := tcpPair(t)
+	c := NewAdbConnection(server, r, tracker, nil, nil, nil)
+	go c.handleHostCommand("host:transport:SER")
+	okay := make([]byte, 4)
+	io.ReadFull(client, okay)
+	fmt.Fprintf(client, "%04x%s", len("exec:cmd package install-write -S 5 1 a.apk -"), "exec:cmd package install-write -S 5 1 a.apk -")
+	client.SetReadDeadline(time.Now().Add(3 * time.Second))
+	io.ReadAll(client)
+
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	if len(ds.setups) != 1 || ds.setups[0].InitialCommand != "exec:cmd package install-write -S 5 1 a.apk -" {
+		t.Errorf("setups = %v", ds.setups)
 	}
 }
