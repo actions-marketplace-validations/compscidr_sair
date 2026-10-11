@@ -12,6 +12,7 @@
 #   eval $(sair-acquire)                          # lock all devices
 #   eval $(sair-acquire --count 1)                # lock any one free device
 #   eval $(sair-acquire --count 2)                # lock any two free devices
+#   eval $(sair-acquire --count 2 --same-proxy)   # two free devices on one proxy (co-located)
 #   eval $(sair-acquire --serial DEVICE_A)        # lock specific device
 #   eval $(sair-acquire --serial DEVICE_A,DEVICE_B)  # lock multiple devices
 #   eval $(sair-acquire --priority -1)            # queue behind everyone at 0 (e.g. bot PRs)
@@ -48,6 +49,7 @@ REPO="${GITHUB_REPOSITORY:-}"
 RUN_URL=""
 PRIORITY=""
 WIFI="on"
+SAME_PROXY=""
 if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
     RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
     [[ -n "${GITHUB_RUN_ATTEMPT:-}" ]] && RUN_URL="${RUN_URL}/attempts/${GITHUB_RUN_ATTEMPT}"
@@ -88,8 +90,12 @@ while [[ $# -gt 0 ]]; do
             WIFI="off"
             shift
             ;;
+        --same-proxy)
+            SAME_PROXY=1
+            shift
+            ;;
         --help|-h)
-            echo "Usage: eval \$(sair-acquire [--serial SERIAL[,SERIAL...]] [--count N] [--url URL] [--api-key KEY] [--repo OWNER/NAME] [--run-url URL] [--priority N] [--no-wifi])" >&2
+            echo "Usage: eval \$(sair-acquire [--serial SERIAL[,SERIAL...]] [--count N] [--url URL] [--api-key KEY] [--repo OWNER/NAME] [--run-url URL] [--priority N] [--no-wifi] [--same-proxy])" >&2
             echo "" >&2
             echo "Acquires a device lock via the SAIR ADB proxy." >&2
             echo "Blocks until devices are available." >&2
@@ -103,6 +109,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --run-url URL     Link to the CI run shown on the job (default: built from GITHUB_* vars)" >&2
             echo "  --priority N      Queue order while waiting: higher goes first, ties are FIFO (default: 0)" >&2
             echo "  --no-wifi         Hand over phones with no Wi-Fi network instead of on the bench Wi-Fi" >&2
+            echo "  --same-proxy      Take every device from one proxy, so the phones sit together" >&2
             exit 0
             ;;
         *)
@@ -153,6 +160,7 @@ fi
 [[ -n "$REPO" ]] && CURL_ARGS+=(--data-urlencode "repo=${REPO}")
 [[ -n "$RUN_URL" ]] && CURL_ARGS+=(--data-urlencode "run_url=${RUN_URL}")
 [[ -n "$PRIORITY" ]] && CURL_ARGS+=(--data-urlencode "priority=${PRIORITY}")
+[[ -n "$SAME_PROXY" ]] && CURL_ARGS+=(--data-urlencode "same_proxy=true")
 RESPONSE=$(curl "${CURL_ARGS[@]}" "${ACQUIRE_URL}") || {
     echo "sair-acquire: ERROR: failed to contact proxy" >&2
     exit 1

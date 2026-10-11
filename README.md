@@ -248,6 +248,10 @@ eval $(sair-acquire --serial DEVICE_A,DEVICE_B)
 # Acquire any N free devices (mutually exclusive with --serial)
 eval $(sair-acquire --count 2)
 
+# Take every device from one proxy, for phones that must sit together (BLE,
+# Wi-Fi Direct, adb reverse); waits until one proxy has enough free
+eval $(sair-acquire --count 2 --same-proxy)
+
 # Queue behind every default-priority job while devices are busy (higher
 # goes first, ties are FIFO, default 0) — e.g. so bot PRs don't hold up humans
 eval $(sair-acquire --priority -1)

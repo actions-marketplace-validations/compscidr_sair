@@ -153,9 +153,21 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// same_proxy=true takes every device from one proxy, for phones that must
+	// sit together; the orchestrator does the picking.
+	sameProxy := false
+	if v := r.URL.Query().Get("same_proxy"); v != "" {
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "same_proxy parameter must be true or false"})
+			return
+		}
+		sameProxy = parsed
+	}
+
 	repo := r.URL.Query().Get("repo")
 	runURL := r.URL.Query().Get("run_url")
-	sp, err := a.scopedPortManager.Acquire(requestedSerials, int32(count), repo, runURL, int32(priority), wifi, a.tenantKey(r))
+	sp, err := a.scopedPortManager.Acquire(requestedSerials, int32(count), repo, runURL, int32(priority), wifi, sameProxy, a.tenantKey(r))
 	if err != nil {
 		code, msg := httpStatusForAcquireError(err)
 		slog.Error("failed to acquire", "error", err, "status", code, "message", msg)

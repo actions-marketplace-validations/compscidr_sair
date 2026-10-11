@@ -146,7 +146,7 @@ func TestAcquireLockCopiesRemoteDevices(t *testing.T) {
 		RemoteDevices: []*pb.DeviceInfo{{Serial: "REMOTE1", Model: "Galaxy"}},
 	}}
 	router := &CommandRouter{orchClient: fake, apiKey: "k", proxyID: "host-a"}
-	res, err := router.AcquireLock(nil, 2, 30, "", "", 0, "")
+	res, err := router.AcquireLock(nil, 2, 30, "", "", 0, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

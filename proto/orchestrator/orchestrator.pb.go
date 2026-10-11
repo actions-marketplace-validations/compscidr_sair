@@ -322,7 +322,12 @@ type AcquireLockRequest struct {
 	// through this proxy: the lock is attributed to that tenant while the device
 	// stays on the owner's proxy and in the owner's lock domain. Empty for the
 	// owner's own locks and from proxies that predate guest keys.
-	TenantApiKey  string `protobuf:"bytes,8,opt,name=tenant_api_key,json=tenantApiKey,proto3" json:"tenant_api_key,omitempty"`
+	TenantApiKey string `protobuf:"bytes,8,opt,name=tenant_api_key,json=tenantApiKey,proto3" json:"tenant_api_key,omitempty"`
+	// Grant every device from a single proxy, waiting until one proxy has
+	// enough free, for tests whose phones must sit together (BLE, Wi-Fi Direct,
+	// adb reverse). False keeps the cross-proxy pick. Ignored by orchestrators
+	// that predate it.
+	SameProxy     bool `protobuf:"varint,9,opt,name=same_proxy,json=sameProxy,proto3" json:"same_proxy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -404,6 +409,13 @@ func (x *AcquireLockRequest) GetTenantApiKey() string {
 		return x.TenantApiKey
 	}
 	return ""
+}
+
+func (x *AcquireLockRequest) GetSameProxy() bool {
+	if x != nil {
+		return x.SameProxy
+	}
+	return false
 }
 
 type AcquireLockResponse struct {
@@ -1659,7 +1671,7 @@ const file_proto_orchestrator_orchestrator_proto_rawDesc = "" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12\x10\n" +
 	"\x03sdk\x18\x04 \x01(\x05R\x03sdk\x12\x18\n" +
 	"\arelease\x18\x05 \x01(\x05R\arelease\x12\x12\n" +
-	"\x04busy\x18\x06 \x01(\bR\x04busy\"\xce\x01\n" +
+	"\x04busy\x18\x06 \x01(\bR\x04busy\"\xed\x01\n" +
 	"\x12AcquireLockRequest\x12\x18\n" +
 	"\aserials\x18\x01 \x03(\tR\aserials\x12\x12\n" +
 	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x14\n" +
@@ -1667,7 +1679,9 @@ const file_proto_orchestrator_orchestrator_proto_rawDesc = "" +
 	"\arun_url\x18\x04 \x01(\tR\x06runUrl\x12\x19\n" +
 	"\bproxy_id\x18\x06 \x01(\tR\aproxyId\x12\x1a\n" +
 	"\bpriority\x18\a \x01(\x05R\bpriority\x12$\n" +
-	"\x0etenant_api_key\x18\b \x01(\tR\ftenantApiKey\"\x89\x01\n" +
+	"\x0etenant_api_key\x18\b \x01(\tR\ftenantApiKey\x12\x1d\n" +
+	"\n" +
+	"same_proxy\x18\t \x01(\bR\tsameProxy\"\x89\x01\n" +
 	"\x13AcquireLockResponse\x12\x17\n" +
 	"\alock_id\x18\x01 \x01(\tR\x06lockId\x12\x18\n" +
 	"\aserials\x18\x02 \x03(\tR\aserials\x12?\n" +

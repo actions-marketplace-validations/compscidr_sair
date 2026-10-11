@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -77,6 +78,7 @@ func TestHTTPApiAcquireCountValidation(t *testing.T) {
 		{"count with serial", "?count=1&serial=DEVICE_A", "count and serial parameters are mutually exclusive"},
 		{"non-numeric priority", "?priority=high", "priority parameter must be a 32-bit integer"},
 		{"oversized priority", "?priority=2147483648", "priority parameter must be a 32-bit integer"},
+		{"bad same_proxy", "?same_proxy=maybe", "same_proxy parameter must be true or false"},
 	}
 
 	for _, tt := range tests {
@@ -111,6 +113,7 @@ func TestHTTPApiAcquireForwardsPriority(t *testing.T) {
 		{"omitted defaults to zero", "", 0},
 		{"negative", "?priority=-1", -1},
 		{"positive", "?priority=5", 5},
+		{"same_proxy alongside", "?priority=5&same_proxy=true", 5},
 	}
 
 	for _, tt := range tests {
@@ -130,6 +133,9 @@ func TestHTTPApiAcquireForwardsPriority(t *testing.T) {
 			}
 			if got := fake.lastAcquire.Priority; got != tt.want {
 				t.Errorf("got priority %d, want %d", got, tt.want)
+			}
+			if got, want := fake.lastAcquire.SameProxy, strings.Contains(tt.query, "same_proxy=true"); got != want {
+				t.Errorf("got same_proxy %v, want %v", got, want)
 			}
 		})
 	}
