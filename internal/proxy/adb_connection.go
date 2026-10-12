@@ -69,12 +69,17 @@ func (c *AdbConnection) tunnel(sourceAddr, serial string) error {
 	if obs != nil {
 		defer obs.finish()
 	}
+	// The device service is read here and sent as the forward's initial
+	// command, so the device source can log and watch it (sair#79).
+	service, err := ReadRequest(conn)
+	if err == io.EOF {
+		return nil // the client selected a transport and left
+	}
+	if err != nil {
+		return err
+	}
 	if sourceAddr == "" {
 		if _, ok := c.remoteDevices[serial]; ok {
-			service, err := ReadRequest(conn)
-			if err != nil {
-				return err
-			}
 			// A reverse forward ends on the host the phone is plugged into,
 			// the owning proxy's, which this job cannot reach.
 			if strings.HasPrefix(service, "reverse:") {
@@ -94,7 +99,7 @@ func (c *AdbConnection) tunnel(sourceAddr, serial string) error {
 			return err
 		}
 	}
-	return c.commandRouter.ForwardToDevice(sourceAddr, serial, "", conn)
+	return c.commandRouter.ForwardToDevice(sourceAddr, serial, service, conn)
 }
 
 func (c *AdbConnection) Handle() {

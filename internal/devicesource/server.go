@@ -34,6 +34,9 @@ type Server struct {
 	// shell runs a command line on a device; adbShell, swapped in tests.
 	shell func(ctx context.Context, serial, command string) (string, error)
 
+	// Forward watchdog (see forwardWatch); 0 means the default.
+	stallTimeout, idleWarnInterval time.Duration
+
 	// Account types per serial, refreshed every accountRefresh (see accountTypes).
 	accountsMu sync.Mutex
 	accounts   map[string]accountsEntry
@@ -305,8 +308,12 @@ func (s *Server) ForwardToDevice(stream pb.DeviceSource_ForwardToDeviceServer) e
 		slog.Debug("ForwardToDevice: initial command sent", "serial", setup.Serial, "command", setup.InitialCommand)
 	}
 
-	// Bidirectional forwarding
+	// Bidirectional forwarding, watched for stalls (sair#79).
 	done := make(chan error, 1)
+	w := newForwardWatch(setup.Serial, setup.InitialCommand)
+	stopWatch := make(chan struct{})
+	defer close(stopWatch)
+	go w.run(conn, s.stallTimeout, s.idleWarnInterval, stopWatch)
 
 	// ADB → gRPC (response direction — drives teardown)
 	go func() {
@@ -318,6 +325,7 @@ func (s *Server) ForwardToDevice(stream pb.DeviceSource_ForwardToDeviceServer) e
 				done <- err
 				return
 			}
+			w.touch()
 			slog.Debug("ForwardToDevice: ADB→gRPC", "serial", setup.Serial, "bytes", n)
 			data := make([]byte, n)
 			copy(data, buf[:n])
@@ -353,7 +361,10 @@ func (s *Server) ForwardToDevice(stream pb.DeviceSource_ForwardToDeviceServer) e
 			}
 			if data := msg.GetData(); data != nil {
 				slog.Debug("ForwardToDevice: gRPC→ADB", "serial", setup.Serial, "bytes", len(data))
-				if _, err := conn.Write(data); err != nil {
+				w.writing()
+				_, err := conn.Write(data)
+				w.touch()
+				if err != nil {
 					slog.Info("ForwardToDevice: ADB write failed", "serial", setup.Serial, "error", err)
 					conn.Close()
 					return
@@ -368,6 +379,10 @@ func (s *Server) ForwardToDevice(stream pb.DeviceSource_ForwardToDeviceServer) e
 	err = <-done
 	conn.Close()
 
+	if reason := w.stalled(); reason != "" {
+		slog.Warn("ForwardToDevice: stalled forward torn down", "serial", setup.Serial, "command", setup.InitialCommand, "reason", reason)
+		return status.Error(codes.DeadlineExceeded, reason)
+	}
 	resultErr := firstRealError(err)
 	slog.Info("ForwardToDevice: finished", "serial", setup.Serial, "error", resultErr)
 	return resultErr
