@@ -140,9 +140,11 @@ func NewScopedPortManager(
 // Pass requestedSerials for specific devices, or count for that many arbitrary
 // free devices. Passing neither locks every device in the tenant's pool.
 //
-// With wifi, every local device is joined to the bench Wi-Fi and reaches the
-// Internet before Acquire returns; if one does not, the lock is released and
-// the error returned. A bench without managed Wi-Fi skips this.
+// With wifi, every local device is joined to the bench Wi-Fi and online on it
+// before Acquire returns; without it, every local device is verified offline
+// first rather than trusting the previous release's reset (sair#86). Either
+// way a device that cannot be put in that state releases the lock and
+// returns the error. A bench without managed Wi-Fi skips this.
 //
 // With sameProxy, the orchestrator grants every device from a single proxy.
 func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count int32, repo, runURL string, priority int32, wifi, sameProxy bool, tenantKey string) (*ScopedPort, error) {
@@ -160,11 +162,9 @@ func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count 
 		return nil, err
 	}
 	m.setupDeviceAPI(sp)
-	if wifi {
-		if err := m.SetWifi(sp.LockID, nil, true); err != nil && !wifiUnmanaged(err) {
-			m.Release(sp.LockID, "error")
-			return nil, err
-		}
+	if err := m.SetWifi(sp.LockID, nil, wifi); err != nil && !wifiUnmanaged(err) {
+		m.Release(sp.LockID, "error")
+		return nil, err
 	}
 	return sp, nil
 }

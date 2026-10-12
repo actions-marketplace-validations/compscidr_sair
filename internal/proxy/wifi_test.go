@@ -126,6 +126,7 @@ func TestAcquireSetsUpDeviceAPI(t *testing.T) {
 	}}
 	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
 	m.DeviceAPIPort = 8550
+	m.setWifi = func(string, dspb.WifiRequest_State) error { return nil } // acquire verifies OFF too (sair#86)
 	var forwards []string
 	m.addReverse = func(serial string, port int) error {
 		forwards = append(forwards, fmt.Sprintf("%s:%d", serial, port))
