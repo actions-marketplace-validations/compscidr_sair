@@ -43,6 +43,8 @@ func TestRebootIfStaleRebootsAndWaitsForBoot(t *testing.T) {
 		switch command {
 		case "cat /proc/uptime":
 			return "90000.00 1.00", nil
+		case "dumpsys window policy":
+			return policyUnlocked, nil
 		case "cat /proc/sys/kernel/random/boot_id":
 			return "old-boot\n", nil
 		case "reboot":
@@ -78,11 +80,25 @@ func TestRebootIfStaleRebootsAndWaitsForBoot(t *testing.T) {
 // boot from the new one.
 func TestRebootIfStaleNeedsTheOldBootID(t *testing.T) {
 	s := &Server{rebootAfter: time.Hour, rebootTimeout: time.Second}
-	cmds := fakeShell(s, map[string]string{"cat /proc/uptime": "90000 1"}, "cat /proc/sys/kernel/random/boot_id")
+	cmds := fakeShell(s, map[string]string{"cat /proc/uptime": "90000 1", "dumpsys window policy": policyUnlocked}, "cat /proc/sys/kernel/random/boot_id")
 	if _, err := s.RebootIfStale(context.Background(), &pb.RebootRequest{Serial: "A"}); err == nil {
 		t.Fatal("no error without a boot_id")
 	}
 	if countOf(*cmds, "reboot") != 0 {
 		t.Errorf("rebooted without a boot_id: %q", *cmds)
+	}
+}
+
+// A PIN phone boots to "unlock to start", which sair cannot get past, so it
+// is never rebooted by uptime.
+func TestRebootIfStaleLeavesASecureLockedPhoneUp(t *testing.T) {
+	s := &Server{rebootAfter: time.Hour, rebootTimeout: time.Second}
+	cmds := fakeShell(s, map[string]string{"cat /proc/uptime": "90000 1", "dumpsys window policy": policySecure})
+	resp, err := s.RebootIfStale(context.Background(), &pb.RebootRequest{Serial: "A"})
+	if err != nil || resp.Rebooted {
+		t.Fatalf("resp = %v, err = %v; want not rebooted, no error", resp, err)
+	}
+	if countOf(*cmds, "reboot") != 0 {
+		t.Errorf("rebooted a secure-locked phone: %q", *cmds)
 	}
 }

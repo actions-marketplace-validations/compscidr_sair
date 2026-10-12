@@ -95,8 +95,10 @@ you:
   and the phone is not offered while it is down. The lock log gets
   `sair: rebooted after release (uptime …)` and the proxy's `/status` lists
   each phone's `last_reboot`. This runs before the Wi-Fi reset, so the
-  offline wait is not spent twice. The wake and the reboot run whether or
-  not the bench manages Wi-Fi.
+  offline wait is not spent twice. A phone with a PIN, pattern or password
+  is never rebooted this way, since it would come back on "unlock to start"
+  and need a human; the device source logs that with the fix. The wake and
+  the reboot run whether or not the bench manages Wi-Fi.
 
 A bench that was already running jobs has phones carrying the last job's
 packages, so "first seen" would record those into the baseline. A test package

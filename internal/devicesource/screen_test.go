@@ -16,8 +16,10 @@ import (
 const (
 	powerAwake     = "POWER MANAGER (dumpsys power)\n  mWakefulness=Awake\n  mWakefulnessChanging=false\n  mStayOn=true\n"
 	powerAsleep    = "POWER MANAGER (dumpsys power)\n  mWakefulness=Asleep\n  mWakefulnessChanging=false\n"
-	policyUnlocked = "WINDOW MANAGER POLICY STATE (dumpsys window policy)\n    mKeyguardOccluded=false mKeyguardOccludedChanged=false\n    KeyguardServiceDelegate\n      showing=false\n      inputRestricted=false\n      occluded=false\n      KeyguardStateMonitor\n        mIsShowing=false\n"
-	policyLocked   = "WINDOW MANAGER POLICY STATE (dumpsys window policy)\n    KeyguardServiceDelegate\n      showing=true\n      KeyguardStateMonitor\n        mIsShowing=true\n"
+	policyUnlocked = "WINDOW MANAGER POLICY STATE (dumpsys window policy)\n    mKeyguardOccluded=false mKeyguardOccludedChanged=false\n    KeyguardServiceDelegate\n      showing=false\n      inputRestricted=false\n      occluded=false\n      secure=false\n      deviceHasKeyguard=true\n      KeyguardStateMonitor\n        mIsShowing=false\n"
+	// Unlocked right now, but with a PIN set: a reboot would need a human.
+	policySecure = "WINDOW MANAGER POLICY STATE (dumpsys window policy)\n    KeyguardServiceDelegate\n      showing=false\n      inputRestricted=false\n      occluded=false\n      secure=true\n      deviceHasKeyguard=true\n"
+	policyLocked = "WINDOW MANAGER POLICY STATE (dumpsys window policy)\n    KeyguardServiceDelegate\n      showing=true\n      KeyguardStateMonitor\n        mIsShowing=true\n"
 )
 
 func TestWake(t *testing.T) {
