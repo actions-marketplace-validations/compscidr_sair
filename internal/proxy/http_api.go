@@ -259,13 +259,13 @@ func parseWifiState(v string, def bool) (on, ok bool) {
 func (a *HTTPApi) handleWifi(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	lockID := q.Get("lock_id")
+	if lockID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lock_id parameter required"})
+		return
+	}
 	byToken := !a.requireAuth(r)
 	if byToken && !a.scopedPortManager.DeviceTokenValid(lockID, r.Header.Get("x-device-token")) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing x-api-key or x-device-token header"})
-		return
-	}
-	if lockID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lock_id parameter required"})
 		return
 	}
 	if byToken && strings.TrimSpace(q.Get("serial")) == "" {

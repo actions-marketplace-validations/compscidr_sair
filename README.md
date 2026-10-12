@@ -323,6 +323,12 @@ fun sairWifi(on: Boolean) {
 }
 ```
 
+This is plain HTTP to `127.0.0.1`, so the app under test must permit cleartext
+there: from targetSdk 28 the platform default refuses it with `Cleartext HTTP
+traffic to 127.0.0.1 not permitted`. Allow it in the debug build's network
+security config, or write the request line over a raw `Socket`, which the
+policy does not cover.
+
 With several phones in a lock, pass each its own serial (`SAIR_SERIALS` lists
 them). The serial is required with a device token: the proxy cannot tell which
 phone a reverse-forwarded connection came from. Devices relayed from another

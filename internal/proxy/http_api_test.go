@@ -317,8 +317,15 @@ func TestHTTPApiWifiDeviceToken(t *testing.T) {
 	if got := post(wifi+"&serial=A", sp.DeviceToken); got != http.StatusOK {
 		t.Errorf("own serial: %d", got)
 	}
-	if got := post("/acquire", sp.DeviceToken); got != http.StatusUnauthorized {
-		t.Errorf("token on /acquire: %d", got)
+	if got := post("/wifi?state=on&serial=A", sp.DeviceToken); got != http.StatusBadRequest {
+		t.Errorf("no lock_id: %d", got)
+	}
+	req := httptest.NewRequest("POST", "/acquire", nil)
+	req.Header.Set("x-device-token", sp.DeviceToken)
+	w := httptest.NewRecorder()
+	api.handleAcquire(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("token on /acquire: %d", w.Code)
 	}
 	m.CloseScopedPort("L1")
 	if got := post(wifi+"&serial=A", sp.DeviceToken); got != http.StatusUnauthorized {

@@ -254,7 +254,7 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 // job owns the state now.
 func (m *ScopedPortManager) resetDevices(sp *ScopedPort) {
 	for serial := range sp.Serials {
-		if _, remote := sp.RemoteDevices[serial]; remote || m.heldByAnyPort(serial) {
+		if _, remote := sp.RemoteDevices[serial]; remote {
 			continue
 		}
 		m.resetDevice(sp.LockID, serial)
@@ -265,6 +265,11 @@ func (m *ScopedPortManager) resetDevice(lockID, serial string) {
 	mu := m.wifiLock(serial)
 	mu.Lock()
 	defer mu.Unlock()
+	// Checked under the lock: an expired lock's reset can queue behind the
+	// next lock's ON on this phone, and must not then undo it.
+	if m.heldByAnyPort(serial) {
+		return
+	}
 	if err := m.removeReverse(serial); err != nil && status.Code(err) != codes.NotFound {
 		slog.Warn("removing reverse forwards failed", "serial", serial, "lockId", lockID, "error", err)
 	}

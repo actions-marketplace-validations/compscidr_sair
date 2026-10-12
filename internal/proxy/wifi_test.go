@@ -159,3 +159,50 @@ func TestAcquireSetsUpDeviceAPI(t *testing.T) {
 		t.Errorf("port = %d after a failed forward, want 0", sp.DeviceAPIPort)
 	}
 }
+
+// An expired lock's reset that queued behind the next lock's ON on the same
+// phone must notice, under the lock, that the phone has a new owner and
+// leave it alone: otherwise the new job starts offline with no device API.
+func TestResetSkipsPhoneRelockedWhileWaiting(t *testing.T) {
+	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
+	var mu sync.Mutex
+	var calls []string
+	release := make(chan struct{})
+	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+		mu.Lock()
+		calls = append(calls, serial+" "+state.String())
+		mu.Unlock()
+		if state == dspb.WifiRequest_ON {
+			<-release
+		}
+		return nil
+	}
+	m.removeReverse = func(serial string) error {
+		mu.Lock()
+		calls = append(calls, serial+" unreverse")
+		mu.Unlock()
+		return nil
+	}
+	if _, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// L1 expired on the orchestrator, which granted A to L2; L2's ON is in
+	// flight when L1's expiry callback runs.
+	if _, err := m.CreateScopedPort("L2", map[string]struct{}{"A": {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	on := make(chan error, 1)
+	go func() { on <- m.SetWifi("L2", nil, true) }()
+	time.Sleep(50 * time.Millisecond)
+	closed := make(chan struct{})
+	go func() { m.OnLockExpired("L1"); close(closed) }()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	<-on
+	<-closed
+
+	if want := []string{"A ON"}; !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls = %q, want %q", calls, want)
+	}
+	m.CloseScopedPort("L2")
+}
