@@ -42,6 +42,16 @@ type Server struct {
 	// Account types per serial, refreshed every accountRefresh (see accountTypes).
 	accountsMu sync.Mutex
 	accounts   map[string]accountsEntry
+
+	// Baseline package set per serial (see packages.go); baselineOverride,
+	// from BASELINE_PACKAGES, replaces it for every device when set.
+	baselineMu       sync.Mutex
+	baseline         map[string]map[string]struct{}
+	baselineWarned   map[string]bool // serials whose baseline read already failed loudly
+	baselineOverride map[string]struct{}
+	// Apps force-stopped (RESET_FORCE_STOP) and cleared (RESET_CLEAR_PACKAGES)
+	// on release, so browser and mail state does not carry over.
+	stopPackages, clearPackages []string
 }
 
 func NewServer() *Server {
@@ -58,6 +68,17 @@ func NewServer() *Server {
 		wifiPingHost:   "dns.google", // a hostname, so the check proves DNS too
 		wifiTimeout:    60 * time.Second,
 		wifiOffTimeout: 20 * time.Second,
+		stopPackages:   packageList("com.android.chrome,com.google.android.gm"),
+	}
+	if v, ok := os.LookupEnv("RESET_FORCE_STOP"); ok {
+		s.stopPackages = packageList(v)
+	}
+	s.clearPackages = packageList(os.Getenv("RESET_CLEAR_PACKAGES"))
+	if v, ok := os.LookupEnv("BASELINE_PACKAGES"); ok {
+		s.baselineOverride = packageSet(packageList(v))
+		if s.baselineOverride == nil {
+			s.baselineOverride = map[string]struct{}{} // set but empty: keep nothing third-party
+		}
 	}
 	if v := os.Getenv("WIFI_PING_HOST"); v != "" {
 		s.wifiPingHost = v
@@ -126,6 +147,7 @@ func (s *Server) getDeviceInfo(serial string) (*pb.Device, error) {
 
 	release, _ := strconv.Atoi(releaseStr)
 	sdk, _ := strconv.Atoi(sdkStr)
+	s.recordBaseline(serial)
 
 	return &pb.Device{
 		Serial:       serial,

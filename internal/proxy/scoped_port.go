@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -97,6 +98,8 @@ type ScopedPortManager struct {
 	removeReverse func(serial string) error
 	// addReverse is commandRouter.AddReverseForward; tests swap it.
 	addReverse func(serial string, port int) error
+	// resetPackages is commandRouter.ResetPackages; tests swap it.
+	resetPackages func(serial string) (removed, suggestions []string, err error)
 	// DeviceAPIPort is the proxy's HTTP API port, reverse-forwarded onto each
 	// local phone on acquire so a test can call POST /wifi with the lock's
 	// device token. 0 disables it. The forward lands on the device source's
@@ -131,6 +134,7 @@ func NewScopedPortManager(
 		setWifi:               commandRouter.SetWifi,
 		removeReverse:         commandRouter.RemoveReverseForwards,
 		addReverse:            commandRouter.AddReverseForward,
+		resetPackages:         commandRouter.ResetPackages,
 	}
 }
 
@@ -160,6 +164,19 @@ func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count 
 				"lockId", result.LockID, "error", releaseErr)
 		}
 		return nil, err
+	}
+	// A job that never released (no if: always() step, a dead runner, a
+	// proxy that was down when the lock expired) left its reverse forwards
+	// and packages behind; the next job cleans up before it starts, and the
+	// line in its lock log says what it found.
+	for serial := range sp.Serials {
+		if _, remote := sp.RemoteDevices[serial]; remote {
+			continue
+		}
+		mu := m.wifiLock(serial)
+		mu.Lock()
+		m.cleanDevice(sp, serial, " (left by an earlier job)")
+		mu.Unlock()
 	}
 	m.setupDeviceAPI(sp)
 	if err := m.SetWifi(sp.LockID, nil, wifi); err != nil && !wifiUnmanaged(err) {
@@ -250,18 +267,19 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 }
 
 // resetDevices returns a closed port's devices to baseline: no reverse
-// forwards, Wi-Fi reset. A device a newer lock already holds is skipped: its
-// job owns the state now.
+// forwards, the job's packages gone, Wi-Fi reset. A device a newer lock
+// already holds is skipped: its job owns the state now.
 func (m *ScopedPortManager) resetDevices(sp *ScopedPort) {
 	for serial := range sp.Serials {
 		if _, remote := sp.RemoteDevices[serial]; remote {
 			continue
 		}
-		m.resetDevice(sp.LockID, serial)
+		m.resetDevice(sp, serial)
 	}
 }
 
-func (m *ScopedPortManager) resetDevice(lockID, serial string) {
+func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
+	lockID := sp.LockID
 	mu := m.wifiLock(serial)
 	mu.Lock()
 	defer mu.Unlock()
@@ -270,12 +288,43 @@ func (m *ScopedPortManager) resetDevice(lockID, serial string) {
 	if m.heldByAnyPort(serial) {
 		return
 	}
-	if err := m.removeReverse(serial); err != nil && status.Code(err) != codes.NotFound {
-		slog.Warn("removing reverse forwards failed", "serial", serial, "lockId", lockID, "error", err)
-	}
+	// Packages before Wi-Fi: a suggestion a removed app registered for the
+	// bench network goes with the app, so the reset's offline wait is not
+	// spent on a phone that keeps re-joining (sair#76).
+	m.cleanDevice(sp, serial, "")
 	if err := m.setWifi(serial, dspb.WifiRequest_RESET); err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound {
 		slog.Warn("Wi-Fi reset failed", "serial", serial, "lockId", lockID, "error", err)
 	}
+}
+
+// cleanDevice removes a phone's reverse forwards and the packages a job
+// installed, recording what went in sp's lock log with note appended. The
+// caller holds the serial's lock. Runs on release and again on acquire, so
+// a job that never released is cleaned up by the next one.
+func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) {
+	if err := m.removeReverse(serial); err != nil && status.Code(err) != codes.NotFound {
+		slog.Warn("removing reverse forwards failed", "serial", serial, "lockId", sp.LockID, "error", err)
+	}
+	removed, suggestions, err := m.resetPackages(serial)
+	switch c := status.Code(err); {
+	case err == nil && len(removed) > 0:
+		slog.Info("uninstalled packages a job left behind", "serial", serial, "lockId", sp.LockID, "packages", removed, "suggestionsRemoved", suggestions)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: packagesRemovedService(removed, suggestions) + note})
+	case err == nil, c == codes.NotFound, c == codes.Unimplemented:
+		// Nothing left behind, a relayed device, or an older device source.
+	default:
+		slog.Warn("package reset failed; a job's APKs may stay on the phone", "serial", serial, "lockId", sp.LockID, "error", err)
+	}
+}
+
+// packagesRemovedService is the lock log line for a cleanup, e.g.
+// "sair: uninstalled com.example.app, com.example.app.test (Wi-Fi suggestions removed with them: bench wpa2-psk)".
+func packagesRemovedService(removed, suggestions []string) string {
+	s := "sair: uninstalled " + strings.Join(removed, ", ")
+	if len(suggestions) > 0 {
+		s += " (Wi-Fi suggestions removed with them: " + strings.Join(suggestions, "; ") + ")"
+	}
+	return s
 }
 
 func (m *ScopedPortManager) heldByAnyPort(serial string) bool {

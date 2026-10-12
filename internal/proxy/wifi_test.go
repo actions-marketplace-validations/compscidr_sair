@@ -10,6 +10,8 @@ import (
 
 	dspb "github.com/compscidr/sair/proto/devicesource"
 	pb "github.com/compscidr/sair/proto/orchestrator"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestScopedPortWifi(t *testing.T) {
@@ -206,4 +208,72 @@ func TestResetSkipsPhoneRelockedWhileWaiting(t *testing.T) {
 		t.Errorf("calls = %q, want %q", calls, want)
 	}
 	m.CloseScopedPort("L2")
+}
+
+// Closing a lock uninstalls what the job left before the Wi-Fi reset, and
+// the lock log carries what went so the orchestrator shows it (sair#76). An
+// older device source (Unimplemented) is simply skipped.
+func TestCloseResetsPackagesBeforeWifiAndLogsIt(t *testing.T) {
+	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
+	var calls []string
+	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+		calls = append(calls, serial+" "+state.String())
+		return nil
+	}
+	m.removeReverse = func(serial string) error {
+		calls = append(calls, serial+" unreverse")
+		return nil
+	}
+	m.resetPackages = func(serial string) ([]string, []string, error) {
+		calls = append(calls, serial+" packages")
+		if serial == "B" {
+			return nil, nil, status.Error(codes.Unimplemented, "old device source")
+		}
+		return []string{"com.example.app", "com.example.app.test"}, []string{"bench wpa2-psk"}, nil
+	}
+	sp, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.CloseScopedPort("L1")
+	entries := sp.Log.DrainAll()
+	if len(entries) != 1 || entries[0].Serial != "A" || entries[0].Service != "sair: uninstalled com.example.app, com.example.app.test (Wi-Fi suggestions removed with them: bench wpa2-psk)" {
+		t.Errorf("lock log = %v", entries)
+	}
+
+	sp, _ = m.CreateScopedPort("L2", map[string]struct{}{"B": {}}, nil)
+	m.CloseScopedPort("L2")
+	if entries := sp.Log.DrainAll(); len(entries) != 0 {
+		t.Errorf("Unimplemented reset logged %v", entries)
+	}
+	want := []string{"A unreverse", "A packages", "A RESET", "B unreverse", "B packages", "B RESET"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls = %q, want %q", calls, want)
+	}
+}
+
+// A job that never released leaves its forwards and packages; the next
+// acquire cleans them before the Wi-Fi check and says so in its lock log.
+func TestAcquireCleansUpWhatAnEarlierJobLeft(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	var calls []string
+	m.removeReverse = func(serial string) error { calls = append(calls, "unreverse"); return nil }
+	m.resetPackages = func(serial string) ([]string, []string, error) {
+		calls = append(calls, "packages")
+		return []string{"com.example.app"}, nil, nil
+	}
+	m.setWifi = func(_ string, state dspb.WifiRequest_State) error { calls = append(calls, state.String()); return nil }
+	sp, err := m.Acquire(nil, 0, "", "", 0, false, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"unreverse", "packages", "OFF"}; !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls = %q, want %q", calls, want)
+	}
+	entries := sp.Log.DrainAll()
+	if len(entries) != 1 || entries[0].Service != "sair: uninstalled com.example.app (left by an earlier job)" {
+		t.Errorf("lock log = %v", entries)
+	}
+	m.CloseScopedPort("L1")
 }
