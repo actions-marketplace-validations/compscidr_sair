@@ -31,10 +31,12 @@ func TestFeaturesForSdk(t *testing.T) {
 			t.Errorf("API 34 must advertise %s (got %q)", f, full)
 		}
 	}
-	for _, f := range []string{"abb", "abb_exec"} {
-		if has(full, f) {
-			t.Errorf("must never advertise %s", f)
-		}
+	// abb_exec from API 30 so installs avoid the `cmd` path (sair#79); abb never.
+	if !has(full, "abb_exec") || has(FeaturesForSdk(29), "abb_exec") {
+		t.Errorf("abb_exec must be advertised from API 30 only")
+	}
+	if has(full, "abb") {
+		t.Error("must never advertise abb")
 	}
 	if FeaturesForSdk(0) != FeaturesForSdk(modernSdk) {
 		t.Error("unknown API level should get the modern set")
