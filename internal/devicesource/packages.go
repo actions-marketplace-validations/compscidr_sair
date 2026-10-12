@@ -58,11 +58,9 @@ func (s *Server) recordBaseline(serial string) {
 	pkgs := parsePackages(out)
 	var excluded []string
 	if out, err := s.shell(ctx, serial, "pm list instrumentation"); err == nil {
-		for _, pkg := range instrumentationPackages(out) {
-			if _, ok := pkgs[pkg]; ok {
-				delete(pkgs, pkg)
-				excluded = append(excluded, pkg)
-			}
+		for _, pkg := range instrumentationPackages(out, pkgs) {
+			delete(pkgs, pkg)
+			excluded = append(excluded, pkg)
 		}
 	}
 	s.baselineMu.Lock()
@@ -75,25 +73,32 @@ func (s *Server) recordBaseline(serial string) {
 		"serial", serial, "packages", slices.Sorted(maps.Keys(pkgs)), "instrumentationExcluded", excluded)
 }
 
-// instrumentationPackages reads `pm list instrumentation`, returning every
-// test package and its target, sorted:
+// instrumentationPackages reads `pm list instrumentation` and returns, sorted,
+// every test package whose target is a different package that is also
+// installed, plus that target: the shape of a CI job's APK pair.
 //
 //	instrumentation:com.example.app.test/androidx.test.runner.AndroidJUnitRunner (target=com.example.app)
-func instrumentationPackages(out string) []string {
+//
+// A production app that ships an instrumentation of its own (Microsoft 365
+// targets an uninstalled test package; some Samsung apps target themselves)
+// is not that shape and stays in the baseline.
+func instrumentationPackages(out string, installed map[string]struct{}) []string {
 	set := make(map[string]struct{})
 	for _, line := range strings.Split(out, "\n") {
 		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "instrumentation:")
 		if !ok {
 			continue
 		}
-		if pkg, _, ok := strings.Cut(rest, "/"); ok && pkg != "" {
-			set[pkg] = struct{}{}
+		pkg, _, _ := strings.Cut(rest, "/")
+		_, target, _ := strings.Cut(rest, "(target=")
+		target = strings.TrimSuffix(strings.TrimSpace(target), ")")
+		_, pkgInstalled := installed[pkg]
+		_, targetInstalled := installed[target]
+		if pkg == "" || target == "" || pkg == target || !pkgInstalled || !targetInstalled {
+			continue
 		}
-		if _, target, ok := strings.Cut(rest, "(target="); ok {
-			if target = strings.TrimSuffix(strings.TrimSpace(target), ")"); target != "" {
-				set[target] = struct{}{}
-			}
-		}
+		set[pkg] = struct{}{}
+		set[target] = struct{}{}
 	}
 	return slices.Sorted(maps.Keys(set))
 }

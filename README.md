@@ -81,9 +81,11 @@ you:
   `sair: uninstalled … (left by an earlier job)`.
 
 A bench that was already running jobs has phones carrying the last job's
-packages, so "first seen" would record those into the baseline. Packages that
-`pm list instrumentation` names (a test package and its target) are never
-baselined, which covers CI leftovers; for anything else, or to be certain, set
+packages, so "first seen" would record those into the baseline. A test package
+and its target, where `pm list instrumentation` names both and both are
+installed, are never baselined, which covers CI leftovers without touching
+apps that merely ship an instrumentation of their own; for anything else, or to
+be certain, set
 `BASELINE_PACKAGES` explicitly after one look at `pm list packages -3` on each
 phone (set it empty to keep no third-party package at all). The device source
 logs the baseline it recorded, by name, so an unwanted entry is visible in the
@@ -184,7 +186,7 @@ modification.
 | `WIFI_PING_HOST` | `dns.google` | Must answer a ping when a phone is online and not when offline; a hostname also checks DNS, set an IP to skip that |
 | `WIFI_CONNECT_TIMEOUT_SECONDS` | `60` | How long Wi-Fi on / acquire waits for a phone to be online |
 | `WIFI_DISCONNECT_TIMEOUT_SECONDS` | `20` | How long Wi-Fi off / release / `--no-wifi` acquire waits for a phone to be offline |
-| `BASELINE_PACKAGES` | — | Third-party packages kept on release, comma-separated. Unset: each phone's packages are recorded when first seen, minus instrumentation packages and their targets. Set but empty: keep none. Set it explicitly on a bench that was in use before this version |
+| `BASELINE_PACKAGES` | — | Third-party packages kept on release, comma-separated. Unset: each phone's packages are recorded when first seen, minus installed test-package/target pairs. Set but empty: keep none. Set it explicitly on a bench that was in use before this version |
 | `RESET_FORCE_STOP` | `com.android.chrome,com.google.android.gm` | Apps force-stopped on release |
 | `RESET_CLEAR_PACKAGES` | — | Apps whose data is cleared (`pm clear`) on release. Off by default: clearing Chrome on a signed-in phone signs it out |
 | `SAIR_LOG_LEVEL` | `info` | `debug` adds per-chunk byte counts for every forward, for tracing a stalled transfer |
