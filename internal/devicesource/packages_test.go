@@ -112,11 +112,18 @@ func TestResetPackagesHonoursTheOverride(t *testing.T) {
 	}
 }
 
+// Only a test package with a different, installed target is a CI leftover.
+// Seen on the cube (sair#89 rollout): Microsoft 365 declares an instrumentation
+// targeting an uninstalled test package, and a Samsung app targets itself;
+// neither may be uninstalled on release.
 func TestInstrumentationPackages(t *testing.T) {
 	out := "instrumentation:com.example.app.test/androidx.test.runner.AndroidJUnitRunner (target=com.example.app)\n" +
+		"instrumentation:com.microsoft.office.officehubrow/android.test.InstrumentationTestRunner (target=com.microsoft.office.msohttp.tests)\n" +
+		"instrumentation:com.samsung.android.app.dressroom/androidx.test.runner.AndroidJUnitRunner (target=com.samsung.android.app.dressroom)\n" +
 		"instrumentation:com.other.tests/.Runner (target=com.other)\n"
-	want := []string{"com.example.app", "com.example.app.test", "com.other", "com.other.tests"}
-	if got := instrumentationPackages(out); !reflect.DeepEqual(got, want) {
+	installed := parsePackages("package:com.example.app\npackage:com.example.app.test\npackage:com.microsoft.office.officehubrow\npackage:com.samsung.android.app.dressroom\npackage:com.other.tests\n")
+	want := []string{"com.example.app", "com.example.app.test"}
+	if got := instrumentationPackages(out, installed); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
