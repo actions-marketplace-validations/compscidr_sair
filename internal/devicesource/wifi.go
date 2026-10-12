@@ -21,7 +21,7 @@ import (
 // WIFI_SSID / WIFI_PASSPHRASE. Only suggestions added by the shell uid are
 // touched: a test app's own suggestions are its own to clean up.
 func (s *Server) SetWifi(ctx context.Context, req *pb.WifiRequest) (*emptypb.Empty, error) {
-	if err := validateSerial(req.Serial); err != nil {
+	if err := s.checkSerial(req.Serial); err != nil {
 		return nil, err
 	}
 	if s.wifiSSID == "" {

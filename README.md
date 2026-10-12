@@ -177,6 +177,8 @@ modification.
 |---|---|---|
 | `DEVICE_SOURCE_PORT` | `8080` | gRPC listen port |
 | `ADB_PORT` | `5038` | Port of the real ADB server |
+| `DEVICE_SERIALS` | — | Only these serials (comma-separated) are managed; the rest of the bench's phones are invisible to sair. Set but empty: none |
+| `EXCLUDE_SERIALS` | — | Every attached phone except these is managed. Mutually exclusive with `DEVICE_SERIALS` |
 | `WIFI_SSID` | — | Bench Wi-Fi joined on acquire and reset on release; unset = Wi-Fi not managed |
 | `WIFI_PASSPHRASE` | — | WPA2 passphrase (unset = open network) |
 | `WIFI_PING_HOST` | `dns.google` | Must answer a ping when a phone is online and not when offline; a hostname also checks DNS, set an IP to skip that |
@@ -186,6 +188,16 @@ modification.
 | `RESET_FORCE_STOP` | `com.android.chrome,com.google.android.gm` | Apps force-stopped on release |
 | `RESET_CLEAR_PACKAGES` | — | Apps whose data is cleared (`pm clear`) on release. Off by default: clearing Chrome on a signed-in phone signs it out |
 | `SAIR_LOG_LEVEL` | `info` | `debug` adds per-chunk byte counts for every forward, for tracing a stalled transfer |
+
+A phone left out by `DEVICE_SERIALS` / `EXCLUDE_SERIALS` is never reported,
+locked or reset (Wi-Fi, reverse forwards, packages), so a couple of phones can
+stay on a CI bench for local development. The filter decides what sair
+manages, not who owns the USB port: the bench's `sair-adb-server` still claims
+every phone, so talk to an excluded phone through it
+(`ANDROID_ADB_SERVER_PORT=5038`, or whatever `ADB_PORT` is) rather than
+starting a second adb server that fights it for the devices. The device source
+logs which attached phones it filtered out, and warns when `DEVICE_SERIALS`
+names one that is not attached.
 
 Verify it's working:
 

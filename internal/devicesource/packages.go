@@ -112,7 +112,7 @@ func (s *Server) baselineFor(serial string) map[string]struct{} {
 // lock log shows what a job left behind. A package that refuses to go is
 // logged and skipped: one stubborn APK must not keep the rest on the phone.
 func (s *Server) ResetPackages(ctx context.Context, req *pb.ResetPackagesRequest) (*pb.ResetPackagesResponse, error) {
-	if err := validateSerial(req.Serial); err != nil {
+	if err := s.checkSerial(req.Serial); err != nil {
 		return nil, err
 	}
 	base := s.baselineFor(req.Serial)

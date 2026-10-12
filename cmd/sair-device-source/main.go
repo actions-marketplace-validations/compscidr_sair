@@ -32,6 +32,8 @@ The SAIR device source. Takes no arguments; it is configured through env vars:
   DEVICE_SOURCE_PORT            gRPC port (default: 8080)
   DEVICE_SOURCE_ADDR            Address the proxy dials back (default: localhost:<DEVICE_SOURCE_PORT>)
   ADB_PORT                      Real ADB server port (default: 5038)
+  DEVICE_SERIALS                Only manage these serials, comma-separated (default: every attached phone)
+  EXCLUDE_SERIALS               Manage every attached phone except these; mutually exclusive with DEVICE_SERIALS
   WIFI_SSID                     Bench Wi-Fi network; empty means Wi-Fi is not managed
   WIFI_PASSPHRASE               Bench Wi-Fi passphrase; empty for an open network
   WIFI_PING_HOST                Host a phone must reach when online, and must not when offline (default: dns.google)
@@ -71,6 +73,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	if os.Getenv("DEVICE_SERIALS") != "" && os.Getenv("EXCLUDE_SERIALS") != "" {
+		slog.Error("DEVICE_SERIALS and EXCLUDE_SERIALS are mutually exclusive; set one")
+		os.Exit(1)
+	}
 	dsServer := devicesource.NewServer()
 	server := grpc.NewServer(
 		grpc.MaxRecvMsgSize(64*1024*1024),

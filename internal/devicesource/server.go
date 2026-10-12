@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,13 @@ type Server struct {
 	// Apps force-stopped (RESET_FORCE_STOP) and cleared (RESET_CLEAR_PACKAGES)
 	// on release, so browser and mail state does not carry over.
 	stopPackages, clearPackages []string
+
+	// Serial filter (sair#90): with allow set only those serials are managed;
+	// otherwise everything but deny. A filtered phone is never reported,
+	// locked or reset, and every per-device RPC refuses it. filterLogged is
+	// the last filter outcome logged, so the log line only repeats on change.
+	allow, deny  map[string]struct{}
+	filterLogged string
 }
 
 func NewServer() *Server {
@@ -89,8 +97,38 @@ func NewServer() *Server {
 	if v, err := strconv.Atoi(os.Getenv("WIFI_DISCONNECT_TIMEOUT_SECONDS")); err == nil && v > 0 {
 		s.wifiOffTimeout = time.Duration(v) * time.Second
 	}
+	if v, ok := os.LookupEnv("DEVICE_SERIALS"); ok {
+		s.allow = packageSet(packageList(v))
+		if s.allow == nil {
+			s.allow = map[string]struct{}{} // set but empty: manage nothing
+		}
+	}
+	s.deny = packageSet(packageList(os.Getenv("EXCLUDE_SERIALS")))
 	s.shell = s.adbShell
 	return s
+}
+
+// managed reports whether the serial filter lets this device source touch a
+// phone.
+func (s *Server) managed(serial string) bool {
+	if s.allow != nil {
+		_, ok := s.allow[serial]
+		return ok
+	}
+	_, denied := s.deny[serial]
+	return !denied
+}
+
+// checkSerial is validateSerial plus the serial filter, for every per-device
+// RPC: a filtered phone is as good as unplugged.
+func (s *Server) checkSerial(serial string) error {
+	if err := validateSerial(serial); err != nil {
+		return err
+	}
+	if !s.managed(serial) {
+		return status.Errorf(codes.NotFound, "device %s is excluded by DEVICE_SERIALS/EXCLUDE_SERIALS", serial)
+	}
+	return nil
 }
 
 func (s *Server) adbCmd(args ...string) *exec.Cmd {
@@ -104,9 +142,13 @@ func (s *Server) getSerialNumbers() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("adb devices: %w", err)
 	}
+	return s.filterSerials(parseAdbDevices(string(out))), nil
+}
 
+// parseAdbDevices reads `adb devices`: the serials in state "device".
+func parseAdbDevices(out string) []string {
 	var serials []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "List of") {
 			continue
@@ -116,7 +158,39 @@ func (s *Server) getSerialNumbers() ([]string, error) {
 			serials = append(serials, parts[0])
 		}
 	}
-	return serials, nil
+	return serials
+}
+
+// filterSerials applies DEVICE_SERIALS / EXCLUDE_SERIALS and logs, whenever
+// the outcome changes, which attached phones are left out and which
+// allowlisted ones are not attached (a typo in the list shows up here, not as
+// a bench with fewer phones).
+func (s *Server) filterSerials(attached []string) []string {
+	if s.allow == nil && s.deny == nil {
+		return attached
+	}
+	var kept, filtered, missing []string
+	for _, serial := range attached {
+		if s.managed(serial) {
+			kept = append(kept, serial)
+		} else {
+			filtered = append(filtered, serial)
+		}
+	}
+	for serial := range s.allow {
+		if !slices.Contains(attached, serial) {
+			missing = append(missing, serial)
+		}
+	}
+	slices.Sort(missing)
+	if key := fmt.Sprint(filtered, missing); key != s.filterLogged {
+		s.filterLogged = key
+		slog.Info("serial filter", "managed", kept, "filteredOut", filtered)
+		if len(missing) > 0 {
+			slog.Warn("DEVICE_SERIALS names phones that are not attached", "serials", missing)
+		}
+	}
+	return kept
 }
 
 func validateSerial(serial string) error {
@@ -186,7 +260,7 @@ func (s *Server) EnqueueCommand(req *pb.Command, stream pb.DeviceSource_EnqueueC
 }
 
 func (s *Server) ExecOnDevice(req *pb.DeviceCommand, stream pb.DeviceSource_ExecOnDeviceServer) error {
-	if err := validateSerial(req.Serial); err != nil {
+	if err := s.checkSerial(req.Serial); err != nil {
 		return err
 	}
 
@@ -302,7 +376,7 @@ func (s *Server) ForwardToDevice(stream pb.DeviceSource_ForwardToDeviceServer) e
 	if setup == nil {
 		return status.Error(codes.InvalidArgument, "first message must be setup")
 	}
-	if err := validateSerial(setup.Serial); err != nil {
+	if err := s.checkSerial(setup.Serial); err != nil {
 		return err
 	}
 
