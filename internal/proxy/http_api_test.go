@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/compscidr/sair/internal/version"
+	dspb "github.com/compscidr/sair/proto/devicesource"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -276,5 +277,61 @@ func TestHTTPApiDeviceReportCarriesAccountTypes(t *testing.T) {
 	devices := tracker.GetDevices()
 	if len(devices) != 1 || !slices.Equal(devices[0].AccountTypes, []string{"com.google"}) {
 		t.Errorf("devices = %v", devices)
+	}
+}
+
+// A lock's device token works on /wifi only, only for that lock, only with a
+// serial, and only while the lock lives (sair#83).
+func TestHTTPApiWifiDeviceToken(t *testing.T) {
+	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
+	var calls []string
+	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+		calls = append(calls, serial+" "+state.String())
+		return nil
+	}
+	m.removeReverse = func(string) error { return nil }
+	sp, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &HTTPApi{apiKey: "test-key", scopedPortManager: m}
+	post := func(path, token string) int {
+		req := httptest.NewRequest("POST", path, nil)
+		if token != "" {
+			req.Header.Set("x-device-token", token)
+		}
+		w := httptest.NewRecorder()
+		api.handleWifi(w, req)
+		return w.Code
+	}
+	wifi := "/wifi?lock_id=L1&state=on"
+	if got := post(wifi+"&serial=A", "wrong"); got != http.StatusUnauthorized {
+		t.Errorf("wrong token: %d", got)
+	}
+	if got := post(wifi, sp.DeviceToken); got != http.StatusBadRequest {
+		t.Errorf("no serial: %d", got)
+	}
+	if got := post(wifi+"&serial=B", sp.DeviceToken); got != http.StatusForbidden {
+		t.Errorf("serial outside lock: %d", got)
+	}
+	if got := post(wifi+"&serial=A", sp.DeviceToken); got != http.StatusOK {
+		t.Errorf("own serial: %d", got)
+	}
+	if got := post("/wifi?state=on&serial=A", sp.DeviceToken); got != http.StatusBadRequest {
+		t.Errorf("no lock_id: %d", got)
+	}
+	req := httptest.NewRequest("POST", "/acquire", nil)
+	req.Header.Set("x-device-token", sp.DeviceToken)
+	w := httptest.NewRecorder()
+	api.handleAcquire(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("token on /acquire: %d", w.Code)
+	}
+	m.CloseScopedPort("L1")
+	if got := post(wifi+"&serial=A", sp.DeviceToken); got != http.StatusUnauthorized {
+		t.Errorf("after release: %d", got)
+	}
+	if want := []string{"A ON", "A RESET"}; !slices.Equal(calls, want) {
+		t.Errorf("calls = %q, want %q", calls, want)
 	}
 }
