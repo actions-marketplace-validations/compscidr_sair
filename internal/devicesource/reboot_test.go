@@ -73,3 +73,16 @@ func TestRebootIfStaleRebootsAndWaitsForBoot(t *testing.T) {
 		t.Error("last reboot not recorded")
 	}
 }
+
+// No baseline boot_id, no reboot: without it the wait cannot tell the old
+// boot from the new one.
+func TestRebootIfStaleNeedsTheOldBootID(t *testing.T) {
+	s := &Server{rebootAfter: time.Hour, rebootTimeout: time.Second}
+	cmds := fakeShell(s, map[string]string{"cat /proc/uptime": "90000 1"}, "cat /proc/sys/kernel/random/boot_id")
+	if _, err := s.RebootIfStale(context.Background(), &pb.RebootRequest{Serial: "A"}); err == nil {
+		t.Fatal("no error without a boot_id")
+	}
+	if countOf(*cmds, "reboot") != 0 {
+		t.Errorf("rebooted without a boot_id: %q", *cmds)
+	}
+}

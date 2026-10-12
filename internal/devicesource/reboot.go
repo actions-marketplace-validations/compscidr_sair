@@ -34,8 +34,12 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 	if s.rebootAfter <= 0 || uptime < s.rebootAfter {
 		return resp, nil
 	}
-	before, _ := s.shell(ctx, req.Serial, "cat /proc/sys/kernel/random/boot_id")
-	before = strings.TrimSpace(before)
+	// The old boot_id is the whole proof that the phone went down; without
+	// it the first poll would pass on the old boot, so no reboot without it.
+	before, err := s.shell(ctx, req.Serial, "cat /proc/sys/kernel/random/boot_id")
+	if before = strings.TrimSpace(before); err != nil || before == "" {
+		return nil, status.Errorf(codes.Internal, "%s: boot_id before reboot: %v; not rebooting", req.Serial, err)
+	}
 	slog.Info("rebooting: uptime over the limit", "serial", req.Serial, "uptime", uptime.Round(time.Minute), "limit", s.rebootAfter)
 	// The connection drops as the phone goes down, so the command's own
 	// error says nothing; the boot_id changing is what proves it rebooted.
