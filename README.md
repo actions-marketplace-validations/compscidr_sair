@@ -57,14 +57,28 @@ When the bench sets `WIFI_SSID` on the device source, Wi-Fi is managed for
 you:
 
 - **On acquire** each phone joins the bench Wi-Fi and the acquire returns only
-  once it can reach the Internet (it fails otherwise). `--no-wifi` hands it over
-  with no network instead.
+  once the phone is *online* (below); it fails otherwise. `--no-wifi` hands it
+  over *offline* instead, verified the same way rather than trusting the
+  previous release.
 - **On release**, and when a lock expires or is cancelled, each phone is reset:
   every suggestion added through `adb shell` and every saved network is
-  forgotten and the radio is toggled. The next job never inherits the last
-  one's network.
+  forgotten and the radio is toggled, and the reset waits until the phone is
+  offline with the radio back on. The next job never inherits the last one's
+  network.
 - **Mid-job**, `sair-wifi off` / `sair-wifi on` drop and restore the network
-  without the job knowing the credentials.
+  without the job knowing the credentials, and return only once the phone is
+  offline or online.
+
+**Online** means all of: associated to `WIFI_SSID` itself (not a SIM or a
+leftover network answering instead), that Wi-Fi is Android's validated default
+network (the same verdict the app under test gets), and `WIFI_PING_HOST`
+answers, which with the default hostname proves DNS too. **Offline** means
+not associated to any Wi-Fi network and `WIFI_PING_HOST` does not answer. Each
+wait is bounded (`WIFI_CONNECT_TIMEOUT_SECONDS`, `WIFI_DISCONNECT_TIMEOUT_SECONDS`)
+and a timeout says which part failed, e.g. `associated to "Cafe", not "bench"`,
+`connected but not VALIDATED`, or `still associated to "bench"` (usually a
+suggestion leaked by a test app's own uid, which sair leaves alone). Mobile
+data is not managed: a phone with a SIM is never offline by this definition.
 
 Suggestions a test app registers under its own uid are not touched; the app
 cleans those up itself. Devices relayed from another proxy are left alone.
@@ -129,8 +143,9 @@ modification.
 | `ADB_PORT` | `5038` | Port of the real ADB server |
 | `WIFI_SSID` | — | Bench Wi-Fi joined on acquire and reset on release; unset = Wi-Fi not managed |
 | `WIFI_PASSPHRASE` | — | WPA2 passphrase (unset = open network) |
-| `WIFI_PING_HOST` | `8.8.8.8` | Pinged to confirm a phone reached the Internet |
-| `WIFI_CONNECT_TIMEOUT_SECONDS` | `60` | How long acquire waits for that ping |
+| `WIFI_PING_HOST` | `dns.google` | Must answer a ping when a phone is online and not when offline; a hostname also checks DNS, set an IP to skip that |
+| `WIFI_CONNECT_TIMEOUT_SECONDS` | `60` | How long Wi-Fi on / acquire waits for a phone to be online |
+| `WIFI_DISCONNECT_TIMEOUT_SECONDS` | `20` | How long Wi-Fi off / release / `--no-wifi` acquire waits for a phone to be offline |
 | `SAIR_LOG_LEVEL` | `info` | `debug` adds per-chunk byte counts for every forward, for tracing a stalled transfer |
 
 Verify it's working:
@@ -258,7 +273,7 @@ eval $(sair-acquire --count 2 --same-proxy)
 # goes first, ties are FIFO, default 0) — e.g. so bot PRs don't hold up humans
 eval $(sair-acquire --priority -1)
 
-# Phones with no network (default: joined to the bench Wi-Fi)
+# Phones verified offline (default: joined to the bench Wi-Fi and online)
 eval $(sair-acquire --no-wifi)
 
 # Drop and restore the network mid-job (all locked devices, or --serial)

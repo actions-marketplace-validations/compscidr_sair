@@ -10,9 +10,12 @@ import (
 	"testing"
 	"time"
 
+	dspb "github.com/compscidr/sair/proto/devicesource"
 	pb "github.com/compscidr/sair/proto/orchestrator"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -320,4 +323,41 @@ func captureSlog(buf *logBuffer) func() {
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return func() { slog.SetDefault(prev) }
+}
+
+// Acquire puts every local device in the requested Wi-Fi state before
+// returning: ON with --wifi, OFF with --no-wifi (sair#86), never "whatever the
+// last release left". A device that cannot get there costs the lock.
+func TestAcquireVerifiesWifiStateEitherWay(t *testing.T) {
+	for _, wifi := range []bool{true, false} {
+		fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+		m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+		var states []dspb.WifiRequest_State
+		m.setWifi = func(_ string, state dspb.WifiRequest_State) error {
+			states = append(states, state)
+			return nil
+		}
+		m.removeReverse = func(string) error { return nil }
+		if _, err := m.Acquire(nil, 0, "", "", 0, wifi, false, ""); err != nil {
+			t.Fatal(err)
+		}
+		want := dspb.WifiRequest_OFF
+		if wifi {
+			want = dspb.WifiRequest_ON
+		}
+		if len(states) != 1 || states[0] != want {
+			t.Errorf("wifi=%v: states = %v, want [%v]", wifi, states, want)
+		}
+		m.CloseScopedPort("L1")
+
+		m.setWifi = func(string, dspb.WifiRequest_State) error {
+			return status.Error(codes.DeadlineExceeded, "still on Wi-Fi")
+		}
+		if _, err := m.Acquire(nil, 0, "", "", 0, wifi, false, ""); status.Code(err) != codes.DeadlineExceeded {
+			t.Errorf("wifi=%v: err = %v, want DeadlineExceeded", wifi, err)
+		}
+		if fake.lastRelease == nil || fake.lastRelease.LockId != "L1" {
+			t.Errorf("wifi=%v: lock not released after the Wi-Fi failure", wifi)
+		}
+	}
 }

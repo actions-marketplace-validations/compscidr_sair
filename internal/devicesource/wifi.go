@@ -2,6 +2,7 @@ package devicesource
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -30,13 +31,23 @@ func (s *Server) SetWifi(ctx context.Context, req *pb.WifiRequest) (*emptypb.Emp
 	var err error
 	switch req.State {
 	case pb.WifiRequest_RESET:
+		// Radio toggled and back on, not associated, no Internet: the next
+		// lock starts from that, not from "it will be shortly" (sair#86).
 		if err = s.wifiForget(ctx, req.Serial); err == nil {
 			if _, err = s.shell(ctx, req.Serial, "svc wifi disable"); err == nil {
-				_, err = s.shell(ctx, req.Serial, "svc wifi enable")
+				if _, err = s.shell(ctx, req.Serial, "svc wifi enable"); err == nil {
+					err = s.waitFor(ctx, s.wifiOffTimeout, req.Serial+" not back to radio on and offline", func() error {
+						return s.checkOffline(ctx, req.Serial, true)
+					})
+				}
 			}
 		}
 	case pb.WifiRequest_OFF:
-		err = s.wifiForget(ctx, req.Serial)
+		if err = s.wifiForget(ctx, req.Serial); err == nil {
+			err = s.waitFor(ctx, s.wifiOffTimeout, req.Serial+" not offline", func() error {
+				return s.checkOffline(ctx, req.Serial, false)
+			})
+		}
 	case pb.WifiRequest_ON:
 		err = s.wifiConnect(ctx, req.Serial)
 	default:
@@ -73,8 +84,9 @@ func (s *Server) wifiForget(ctx context.Context, serial string) error {
 	return nil
 }
 
-// wifiConnect suggests the bench network and waits until the device can ping
-// wifiPingHost, so a job never gets a phone that is still associating.
+// wifiConnect suggests the bench network and waits until the device is
+// online on it (see checkOnline), so a job never gets a phone that is still
+// associating, or one that answers a ping over some other network.
 func (s *Server) wifiConnect(ctx context.Context, serial string) error {
 	add := "cmd wifi add-suggestion " + shellQuote(s.wifiSSID) + " open"
 	if s.wifiPassphrase != "" {
@@ -86,21 +98,147 @@ func (s *Server) wifiConnect(ctx context.Context, serial string) error {
 	if _, err := s.shell(ctx, serial, "cmd wifi start-scan"); err != nil {
 		return fmt.Errorf("start scan: %w", err)
 	}
-	deadline := time.Now().Add(s.wifiTimeout)
+	return s.waitFor(ctx, s.wifiTimeout, fmt.Sprintf("%s not online on Wi-Fi %q", serial, s.wifiSSID), func() error {
+		return s.checkOnline(ctx, serial)
+	})
+}
+
+// waitFor polls check every two seconds until it passes, or returns
+// DeadlineExceeded after timeout with the last reason it did not.
+func (s *Server) waitFor(ctx context.Context, timeout time.Duration, what string, check func() error) error {
+	deadline := time.Now().Add(timeout)
 	for {
-		if _, err := s.shell(ctx, serial, "ping -c1 -W2 "+shellQuote(s.wifiPingHost)); err == nil {
+		err := check()
+		if err == nil {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return status.Errorf(codes.DeadlineExceeded, "%s did not reach %s within %s after joining Wi-Fi %q",
-				serial, s.wifiPingHost, s.wifiTimeout, s.wifiSSID)
+			return status.Errorf(codes.DeadlineExceeded, "%s within %s: %v", what, timeout, err)
 		}
 		select {
-		case <-time.After(2 * time.Second):
+		case <-time.After(min(2*time.Second, time.Until(deadline))):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
+}
+
+// checkOnline is the ON contract (sair#87): associated to the bench SSID,
+// that Wi-Fi is the validated default network (Android's own verdict, so the
+// app under test sees it as online too), and wifiPingHost answers, which with
+// a hostname also proves DNS. nil when all three hold, else why not.
+func (s *Server) checkOnline(ctx context.Context, serial string) error {
+	st, err := s.wifiStatus(ctx, serial)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !st.enabled:
+		return errors.New("Wi-Fi radio is off")
+	case st.ssid == "":
+		return errors.New("not associated to any network")
+	case st.ssid != s.wifiSSID:
+		return fmt.Errorf("associated to %q, not %q", st.ssid, s.wifiSSID)
+	}
+	out, err := s.shell(ctx, serial, "dumpsys connectivity")
+	if err != nil {
+		return fmt.Errorf("dumpsys connectivity: %w", err)
+	}
+	if err := defaultNetworkValidatedWifi(out); err != nil {
+		return err
+	}
+	if _, err := s.shell(ctx, serial, "ping -c1 -W2 "+shellQuote(s.wifiPingHost)); err != nil {
+		return fmt.Errorf("cannot reach %s (DNS or route)", s.wifiPingHost)
+	}
+	return nil
+}
+
+// checkOffline is the OFF contract (sair#86): not associated to any Wi-Fi
+// network and no route to wifiPingHost. With radioOn it also wants the radio
+// back up, for RESET. A phone still on an SSID after a forget is usually
+// re-joining through a suggestion from some app's own uid, which the error
+// names so it is found from the log rather than from a failing test.
+func (s *Server) checkOffline(ctx context.Context, serial string, radioOn bool) error {
+	st, err := s.wifiStatus(ctx, serial)
+	if err != nil {
+		return err
+	}
+	switch {
+	case radioOn && !st.enabled:
+		return errors.New("Wi-Fi radio is still off")
+	case st.ssid != "":
+		return fmt.Errorf("still associated to %q", st.ssid)
+	}
+	if _, err := s.shell(ctx, serial, "ping -c1 -W2 "+shellQuote(s.wifiPingHost)); err == nil {
+		return fmt.Errorf("still reaches %s (mobile data?)", s.wifiPingHost)
+	}
+	return nil
+}
+
+// wifiStatusInfo is what `cmd wifi status` says about a phone. API 30+, which
+// every `cmd wifi` call here already needs.
+type wifiStatusInfo struct {
+	enabled bool
+	ssid    string // "" when not associated
+}
+
+func (s *Server) wifiStatus(ctx context.Context, serial string) (wifiStatusInfo, error) {
+	out, err := s.shell(ctx, serial, "cmd wifi status")
+	if err != nil {
+		return wifiStatusInfo{}, fmt.Errorf("cmd wifi status: %w", err)
+	}
+	return parseWifiStatus(out), nil
+}
+
+// parseWifiStatus reads the lines that matter:
+//
+//	Wifi is enabled
+//	Wifi is connected to "bench"      (or: Wifi is not connected)
+func parseWifiStatus(out string) wifiStatusInfo {
+	var st wifiStatusInfo
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "Wifi is enabled" {
+			st.enabled = true
+		} else if ssid, ok := strings.CutPrefix(line, "Wifi is connected to "); ok {
+			st.ssid = strings.Trim(ssid, `"`)
+		}
+	}
+	return st
+}
+
+// defaultNetworkValidatedWifi reads `dumpsys connectivity`: the active default
+// network must be the Wi-Fi one and carry VALIDATED, which Android sets only
+// after its own connectivity probe passed.
+//
+//	Active default network: 100
+//	Current Networks:
+//	  NetworkAgentInfo{ ... network{100} ... nc{[ Transports: WIFI Capabilities: ...&VALIDATED&... ]} ...
+func defaultNetworkValidatedWifi(out string) error {
+	lines := strings.Split(out, "\n")
+	id := ""
+	for _, line := range lines {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "Active default network: "); ok {
+			id = strings.TrimSpace(v)
+			break
+		}
+	}
+	if id == "" || id == "none" {
+		return errors.New("no default network")
+	}
+	for _, line := range lines {
+		if !strings.Contains(line, "network{"+id+"}") || !strings.Contains(line, "Transports:") {
+			continue
+		}
+		switch {
+		case !strings.Contains(line, "Transports: WIFI"):
+			return errors.New("default network is not Wi-Fi")
+		case !strings.Contains(line, "VALIDATED"):
+			return errors.New("connected but not VALIDATED")
+		}
+		return nil
+	}
+	return fmt.Errorf("default network %s not listed", id)
 }
 
 // adbShell runs one command line on the device. The command is passed as a

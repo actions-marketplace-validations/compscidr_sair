@@ -34,8 +34,9 @@ The SAIR device source. Takes no arguments; it is configured through env vars:
   ADB_PORT                      Real ADB server port (default: 5038)
   WIFI_SSID                     Bench Wi-Fi network; empty means Wi-Fi is not managed
   WIFI_PASSPHRASE               Bench Wi-Fi passphrase; empty for an open network
-  WIFI_PING_HOST                Host a phone must ping before it is handed over (default: 8.8.8.8)
-  WIFI_CONNECT_TIMEOUT_SECONDS  How long to wait for that (default: 60)
+  WIFI_PING_HOST                Host a phone must reach when online, and must not when offline (default: dns.google)
+  WIFI_CONNECT_TIMEOUT_SECONDS  How long to wait for a phone to be online on the bench Wi-Fi (default: 60)
+  WIFI_DISCONNECT_TIMEOUT_SECONDS  How long to wait for a phone to be offline after Wi-Fi off / reset (default: 20)
   SAIR_LOG_LEVEL                debug, info, warn or error (default: info)
   SAIR_AUTO_UPDATE              false disables updating to the latest release on start
   GITHUB_TOKEN                  Optional token for the auto-updater's GitHub API calls

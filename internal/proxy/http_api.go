@@ -146,8 +146,8 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 		priority = parsed
 	}
 
-	// wifi=on (the default) hands over devices already on the bench Wi-Fi;
-	// wifi=off hands them over in the release baseline: no network at all.
+	// wifi=on (the default) hands over devices online on the bench Wi-Fi;
+	// wifi=off hands them over verified offline.
 	wifi, ok := parseWifiState(r.URL.Query().Get("wifi"), true)
 	if !ok {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "wifi parameter must be on or off"})
