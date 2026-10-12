@@ -73,7 +73,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if os.Getenv("DEVICE_SERIALS") != "" && os.Getenv("EXCLUDE_SERIALS") != "" {
+	// LookupEnv: a set-but-empty DEVICE_SERIALS is a real allowlist (manage nothing).
+	if _, allow := os.LookupEnv("DEVICE_SERIALS"); allow && os.Getenv("EXCLUDE_SERIALS") != "" {
 		slog.Error("DEVICE_SERIALS and EXCLUDE_SERIALS are mutually exclusive; set one")
 		os.Exit(1)
 	}

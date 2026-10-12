@@ -59,6 +59,7 @@ type Server struct {
 	// locked or reset, and every per-device RPC refuses it. filterLogged is
 	// the last filter outcome logged, so the log line only repeats on change.
 	allow, deny  map[string]struct{}
+	filterMu     sync.Mutex // GetDevices runs from the reporter and from any gRPC caller at once
 	filterLogged string
 }
 
@@ -183,8 +184,12 @@ func (s *Server) filterSerials(attached []string) []string {
 		}
 	}
 	slices.Sort(missing)
-	if key := fmt.Sprint(filtered, missing); key != s.filterLogged {
-		s.filterLogged = key
+	key := fmt.Sprint(filtered, missing)
+	s.filterMu.Lock()
+	changed := key != s.filterLogged
+	s.filterLogged = key
+	s.filterMu.Unlock()
+	if changed {
 		slog.Info("serial filter", "managed", kept, "filteredOut", filtered)
 		if len(missing) > 0 {
 			slog.Warn("DEVICE_SERIALS names phones that are not attached", "serials", missing)
