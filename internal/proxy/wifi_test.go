@@ -251,3 +251,29 @@ func TestCloseResetsPackagesBeforeWifiAndLogsIt(t *testing.T) {
 		t.Errorf("calls = %q, want %q", calls, want)
 	}
 }
+
+// A job that never released leaves its forwards and packages; the next
+// acquire cleans them before the Wi-Fi check and says so in its lock log.
+func TestAcquireCleansUpWhatAnEarlierJobLeft(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	var calls []string
+	m.removeReverse = func(serial string) error { calls = append(calls, "unreverse"); return nil }
+	m.resetPackages = func(serial string) ([]string, []string, error) {
+		calls = append(calls, "packages")
+		return []string{"com.example.app"}, nil, nil
+	}
+	m.setWifi = func(_ string, state dspb.WifiRequest_State) error { calls = append(calls, state.String()); return nil }
+	sp, err := m.Acquire(nil, 0, "", "", 0, false, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"unreverse", "packages", "OFF"}; !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls = %q, want %q", calls, want)
+	}
+	entries := sp.Log.DrainAll()
+	if len(entries) != 1 || entries[0].Service != "sair: uninstalled com.example.app (left by an earlier job)" {
+		t.Errorf("lock log = %v", entries)
+	}
+	m.CloseScopedPort("L1")
+}

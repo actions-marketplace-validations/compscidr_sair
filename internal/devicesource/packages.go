@@ -24,7 +24,11 @@ import (
 // restart on a clean phone. Persist it under a state dir if that bites.
 
 // recordBaseline takes the baseline the first time a serial is seen; a no-op
-// afterwards and when BASELINE_PACKAGES overrides it.
+// afterwards and when BASELINE_PACKAGES overrides it. On a bench already
+// running jobs, "first seen" is "whatever the last job left", so anything
+// `pm list instrumentation` names (a test package and its target) is never
+// baselined: nothing a bench owner installed by hand shows up there, and a
+// CI job's leftovers always do.
 func (s *Server) recordBaseline(serial string) {
 	if s.baselineOverride != nil {
 		return
@@ -39,17 +43,59 @@ func (s *Server) recordBaseline(serial string) {
 	defer cancel()
 	out, err := s.shell(ctx, serial, "pm list packages -3")
 	if err != nil {
-		slog.Debug("reading baseline packages failed", "serial", serial, "error", err)
+		s.baselineMu.Lock()
+		warned := s.baselineWarned[serial]
+		if s.baselineWarned == nil {
+			s.baselineWarned = make(map[string]bool)
+		}
+		s.baselineWarned[serial] = true
+		s.baselineMu.Unlock()
+		if !warned {
+			slog.Warn("reading baseline packages failed; releases cannot reset packages until it succeeds", "serial", serial, "error", err)
+		}
 		return
 	}
 	pkgs := parsePackages(out)
+	var excluded []string
+	if out, err := s.shell(ctx, serial, "pm list instrumentation"); err == nil {
+		for _, pkg := range instrumentationPackages(out) {
+			if _, ok := pkgs[pkg]; ok {
+				delete(pkgs, pkg)
+				excluded = append(excluded, pkg)
+			}
+		}
+	}
 	s.baselineMu.Lock()
 	if s.baseline == nil {
 		s.baseline = make(map[string]map[string]struct{})
 	}
 	s.baseline[serial] = pkgs
 	s.baselineMu.Unlock()
-	slog.Info("recorded baseline packages", "serial", serial, "packages", len(pkgs))
+	slog.Info("recorded baseline packages; set BASELINE_PACKAGES if a previous job's are among them",
+		"serial", serial, "packages", slices.Sorted(maps.Keys(pkgs)), "instrumentationExcluded", excluded)
+}
+
+// instrumentationPackages reads `pm list instrumentation`, returning every
+// test package and its target, sorted:
+//
+//	instrumentation:com.example.app.test/androidx.test.runner.AndroidJUnitRunner (target=com.example.app)
+func instrumentationPackages(out string) []string {
+	set := make(map[string]struct{})
+	for _, line := range strings.Split(out, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "instrumentation:")
+		if !ok {
+			continue
+		}
+		if pkg, _, ok := strings.Cut(rest, "/"); ok && pkg != "" {
+			set[pkg] = struct{}{}
+		}
+		if _, target, ok := strings.Cut(rest, "(target="); ok {
+			if target = strings.TrimSuffix(strings.TrimSpace(target), ")"); target != "" {
+				set[target] = struct{}{}
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(set))
 }
 
 func (s *Server) baselineFor(serial string) map[string]struct{} {

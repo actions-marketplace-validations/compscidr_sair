@@ -12,18 +12,23 @@ import (
 )
 
 const (
-	basePackages = "package:com.bench.keep\npackage:com.vendor.tool\n"
-	jobPackages  = "package:com.bench.keep\npackage:com.example.app.test\npackage:com.vendor.tool\npackage:com.example.app\npackage:com.stubborn\n"
-	suggestions  = "SSID                             Security type(s)\nbench                            wpa2-psk\nDIRECT-TEST-ab                   wpa2-psk\n"
+	// The last job's app and test package are still on the phone when the
+	// device source first sees it; pm list instrumentation names both.
+	basePackages    = "package:com.bench.keep\npackage:com.example.app.test\npackage:com.vendor.tool\npackage:com.example.app\n"
+	instrumentation = "instrumentation:com.example.app.test/androidx.test.runner.AndroidJUnitRunner (target=com.example.app)\n"
+	jobPackages     = "package:com.bench.keep\npackage:com.example.app.test\npackage:com.vendor.tool\npackage:com.example.app\npackage:com.stubborn\n"
+	suggestions     = "SSID                             Security type(s)\nbench                            wpa2-psk\nDIRECT-TEST-ab                   wpa2-psk\n"
 )
 
-// The baseline is read once per phone and reused; a release then removes
-// exactly what the job added, in order, reports it with the Wi-Fi
-// suggestions that went, and keeps going past a package that will not go.
+// The baseline is read once per phone and reused, minus the instrumentation
+// packages a previous job left; a release then removes exactly what is not
+// baseline, in order, reports it with the Wi-Fi suggestions that went, and
+// keeps going past a package that will not go.
 func TestResetPackagesRemovesWhatTheJobAdded(t *testing.T) {
 	s := &Server{stopPackages: []string{"com.android.chrome"}, clearPackages: []string{"com.android.chrome"}}
 	outputs := map[string]string{
 		"pm list packages -3":                 basePackages,
+		"pm list instrumentation":             instrumentation,
 		"pm uninstall 'com.example.app'":      "Success\n",
 		"pm uninstall 'com.example.app.test'": "Success\n",
 		"pm uninstall 'com.stubborn'":         "Failure [DELETE_FAILED_DEVICE_POLICY_MANAGER]\n",
@@ -32,8 +37,8 @@ func TestResetPackagesRemovesWhatTheJobAdded(t *testing.T) {
 	cmds := fakeShell(s, outputs)
 	s.recordBaseline("ABC")
 	s.recordBaseline("ABC")
-	if got := len(*cmds); got != 1 {
-		t.Fatalf("baseline read %d times, want once: %q", got, *cmds)
+	if got := len(*cmds); got != 2 {
+		t.Fatalf("baseline read %d commands, want 2 (packages, instrumentation): %q", got, *cmds)
 	}
 
 	// The job installed its app and test package; one more refuses to go.
@@ -61,7 +66,7 @@ func TestResetPackagesRemovesWhatTheJobAdded(t *testing.T) {
 		t.Errorf("suggestions removed = %q, want %q", resp.SuggestionsRemoved, want)
 	}
 	want := []string{
-		"pm list packages -3", // the baseline
+		"pm list packages -3", "pm list instrumentation", // the baseline
 		"cmd wifi list-all-suggestions", "pm list packages -3",
 		"pm uninstall 'com.example.app'", "pm uninstall 'com.example.app.test'", "pm uninstall 'com.stubborn'",
 		"am force-stop 'com.android.chrome'", "pm clear 'com.android.chrome'",
@@ -104,5 +109,14 @@ func TestResetPackagesHonoursTheOverride(t *testing.T) {
 	}
 	if resp.SuggestionsRemoved != nil {
 		t.Errorf("no suggestion listing, yet reported %q", resp.SuggestionsRemoved)
+	}
+}
+
+func TestInstrumentationPackages(t *testing.T) {
+	out := "instrumentation:com.example.app.test/androidx.test.runner.AndroidJUnitRunner (target=com.example.app)\n" +
+		"instrumentation:com.other.tests/.Runner (target=com.other)\n"
+	want := []string{"com.example.app", "com.example.app.test", "com.other", "com.other.tests"}
+	if got := instrumentationPackages(out); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }

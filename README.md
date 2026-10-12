@@ -74,6 +74,20 @@ you:
   suggestion that went with a package. This runs before the Wi-Fi reset, so a
   suggestion a test app leaked for the bench network is gone before the reset
   waits for the phone to be offline.
+- **On acquire** the same cleanup runs first (reverse forwards, packages),
+  before the Wi-Fi check. A job that never released, because it had no
+  `if: always()` release step, its runner died, or the proxy was down when
+  the lock expired, is cleaned up by the next job, whose lock log then shows
+  `sair: uninstalled … (left by an earlier job)`.
+
+A bench that was already running jobs has phones carrying the last job's
+packages, so "first seen" would record those into the baseline. Packages that
+`pm list instrumentation` names (a test package and its target) are never
+baselined, which covers CI leftovers; for anything else, or to be certain, set
+`BASELINE_PACKAGES` explicitly after one look at `pm list packages -3` on each
+phone (set it empty to keep no third-party package at all). The device source
+logs the baseline it recorded, by name, so an unwanted entry is visible in the
+first log after the upgrade.
 - **Mid-job**, `sair-wifi off` / `sair-wifi on` drop and restore the network
   without the job knowing the credentials, and return only once the phone is
   offline or online. Each phone is switched on its own, so two phones can ask
@@ -101,8 +115,9 @@ re-joining the bench Wi-Fi after every forget; `--no-wifi` acquires on that
 phone then fail with `still associated to "bench"` until it is uninstalled or
 left out of `BASELINE_PACKAGES`.
 
-Suggestions a test app registers under its own uid are not touched; the app
-cleans those up itself. Devices relayed from another proxy are left alone.
+The Wi-Fi reset does not touch suggestions a test app registered under its
+own uid; those go when the package reset uninstalls the app. Devices relayed
+from another proxy are left alone.
 
 ## Architecture
 
@@ -167,7 +182,7 @@ modification.
 | `WIFI_PING_HOST` | `dns.google` | Must answer a ping when a phone is online and not when offline; a hostname also checks DNS, set an IP to skip that |
 | `WIFI_CONNECT_TIMEOUT_SECONDS` | `60` | How long Wi-Fi on / acquire waits for a phone to be online |
 | `WIFI_DISCONNECT_TIMEOUT_SECONDS` | `20` | How long Wi-Fi off / release / `--no-wifi` acquire waits for a phone to be offline |
-| `BASELINE_PACKAGES` | — | Third-party packages kept on release, comma-separated. Unset: each phone's packages are recorded when first seen. Set but empty: keep none |
+| `BASELINE_PACKAGES` | — | Third-party packages kept on release, comma-separated. Unset: each phone's packages are recorded when first seen, minus instrumentation packages and their targets. Set but empty: keep none. Set it explicitly on a bench that was in use before this version |
 | `RESET_FORCE_STOP` | `com.android.chrome,com.google.android.gm` | Apps force-stopped on release |
 | `RESET_CLEAR_PACKAGES` | — | Apps whose data is cleared (`pm clear`) on release. Off by default: clearing Chrome on a signed-in phone signs it out |
 | `SAIR_LOG_LEVEL` | `info` | `debug` adds per-chunk byte counts for every forward, for tracing a stalled transfer |

@@ -47,6 +47,7 @@ type Server struct {
 	// from BASELINE_PACKAGES, replaces it for every device when set.
 	baselineMu       sync.Mutex
 	baseline         map[string]map[string]struct{}
+	baselineWarned   map[string]bool // serials whose baseline read already failed loudly
 	baselineOverride map[string]struct{}
 	// Apps force-stopped (RESET_FORCE_STOP) and cleared (RESET_CLEAR_PACKAGES)
 	// on release, so browser and mail state does not carry over.
