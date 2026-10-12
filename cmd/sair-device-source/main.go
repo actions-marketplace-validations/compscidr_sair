@@ -37,6 +37,10 @@ The SAIR device source. Takes no arguments; it is configured through env vars:
   WIFI_PING_HOST                Host a phone must reach when online, and must not when offline (default: dns.google)
   WIFI_CONNECT_TIMEOUT_SECONDS  How long to wait for a phone to be online on the bench Wi-Fi (default: 60)
   WIFI_DISCONNECT_TIMEOUT_SECONDS  How long to wait for a phone to be offline after Wi-Fi off / reset (default: 20)
+  BASELINE_PACKAGES             Third-party packages to keep on release, comma-separated; unset records
+                                each phone's packages when first seen (set but empty keeps none)
+  RESET_FORCE_STOP              Apps force-stopped on release (default: com.android.chrome,com.google.android.gm)
+  RESET_CLEAR_PACKAGES          Apps whose data is cleared on release (default: none; clearing Chrome signs it out)
   SAIR_LOG_LEVEL                debug, info, warn or error (default: info)
   SAIR_AUTO_UPDATE              false disables updating to the latest release on start
   GITHUB_TOKEN                  Optional token for the auto-updater's GitHub API calls

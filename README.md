@@ -65,6 +65,15 @@ you:
   forgotten and the radio is toggled, and the reset waits until the phone is
   offline with the radio back on. The next job never inherits the last one's
   network.
+- **Also on release**, every third-party package the phone did not have when
+  the device source first saw it is uninstalled (test APKs and `.test`
+  packages included, with their app data and signed-in accounts), and the
+  browser and mail apps are force-stopped; see `BASELINE_PACKAGES`,
+  `RESET_FORCE_STOP` and `RESET_CLEAR_PACKAGES`. What was removed is written to
+  the proxy log and the lock's log on the orchestrator, naming any Wi-Fi
+  suggestion that went with a package. This runs before the Wi-Fi reset, so a
+  suggestion a test app leaked for the bench network is gone before the reset
+  waits for the phone to be offline.
 - **Mid-job**, `sair-wifi off` / `sair-wifi on` drop and restore the network
   without the job knowing the credentials, and return only once the phone is
   offline or online. Each phone is switched on its own, so two phones can ask
@@ -84,13 +93,13 @@ timeout says which part failed, e.g. `associated to "Cafe", not "bench"`,
 `connected but not VALIDATED`, or `still associated to "bench"`. Mobile data
 is not managed: a phone with a SIM is never offline by this definition.
 
-One sharp edge: a suggestion for the bench network registered by a test app's
-own uid is the app's to remove, not sair's. If a job leaves one behind (a
-cancelled run, a dead runner), the phone re-joins the bench Wi-Fi after every
-forget, so `--no-wifi` acquires on that phone fail with `still associated to
-"bench"` until the app is uninstalled. Uninstall the test app in the job's
-`if: always()` cleanup; sair#76 (a baseline package set on release) is the
-bench-side fix.
+A suggestion for the bench network registered by a test app's own uid is not
+sair's to remove, but the app is: the package reset on release uninstalls it,
+and Android drops its suggestions with it. Only a package in the baseline (a
+test app that was on the phone when the device source first saw it) can keep
+re-joining the bench Wi-Fi after every forget; `--no-wifi` acquires on that
+phone then fail with `still associated to "bench"` until it is uninstalled or
+left out of `BASELINE_PACKAGES`.
 
 Suggestions a test app registers under its own uid are not touched; the app
 cleans those up itself. Devices relayed from another proxy are left alone.
@@ -158,6 +167,9 @@ modification.
 | `WIFI_PING_HOST` | `dns.google` | Must answer a ping when a phone is online and not when offline; a hostname also checks DNS, set an IP to skip that |
 | `WIFI_CONNECT_TIMEOUT_SECONDS` | `60` | How long Wi-Fi on / acquire waits for a phone to be online |
 | `WIFI_DISCONNECT_TIMEOUT_SECONDS` | `20` | How long Wi-Fi off / release / `--no-wifi` acquire waits for a phone to be offline |
+| `BASELINE_PACKAGES` | — | Third-party packages kept on release, comma-separated. Unset: each phone's packages are recorded when first seen. Set but empty: keep none |
+| `RESET_FORCE_STOP` | `com.android.chrome,com.google.android.gm` | Apps force-stopped on release |
+| `RESET_CLEAR_PACKAGES` | — | Apps whose data is cleared (`pm clear`) on release. Off by default: clearing Chrome on a signed-in phone signs it out |
 | `SAIR_LOG_LEVEL` | `info` | `debug` adds per-chunk byte counts for every forward, for tracing a stalled transfer |
 
 Verify it's working:

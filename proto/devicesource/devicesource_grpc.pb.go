@@ -25,6 +25,7 @@ const (
 	DeviceSource_ExecOnDevice_FullMethodName    = "/devicesource.DeviceSource/ExecOnDevice"
 	DeviceSource_ForwardToDevice_FullMethodName = "/devicesource.DeviceSource/ForwardToDevice"
 	DeviceSource_SetWifi_FullMethodName         = "/devicesource.DeviceSource/SetWifi"
+	DeviceSource_ResetPackages_FullMethodName   = "/devicesource.DeviceSource/ResetPackages"
 )
 
 // DeviceSourceClient is the client API for DeviceSource service.
@@ -42,6 +43,12 @@ type DeviceSourceClient interface {
 	// on this device source (WIFI_SSID / WIFI_PASSPHRASE). FailedPrecondition
 	// when no network is configured: the bench does not manage Wi-Fi.
 	SetWifi(ctx context.Context, in *WifiRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Uninstall every third-party package that is not in the device's baseline
+	// (recorded when the device was first seen, or BASELINE_PACKAGES), and
+	// force-stop / clear the configured apps. Used on release, before the
+	// Wi-Fi reset, so a suggestion a removed app registered goes with it.
+	// FailedPrecondition when no baseline is known for the device yet.
+	ResetPackages(ctx context.Context, in *ResetPackagesRequest, opts ...grpc.CallOption) (*ResetPackagesResponse, error)
 }
 
 type deviceSourceClient struct {
@@ -123,6 +130,16 @@ func (c *deviceSourceClient) SetWifi(ctx context.Context, in *WifiRequest, opts 
 	return out, nil
 }
 
+func (c *deviceSourceClient) ResetPackages(ctx context.Context, in *ResetPackagesRequest, opts ...grpc.CallOption) (*ResetPackagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResetPackagesResponse)
+	err := c.cc.Invoke(ctx, DeviceSource_ResetPackages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeviceSourceServer is the server API for DeviceSource service.
 // All implementations must embed UnimplementedDeviceSourceServer
 // for forward compatibility.
@@ -138,6 +155,12 @@ type DeviceSourceServer interface {
 	// on this device source (WIFI_SSID / WIFI_PASSPHRASE). FailedPrecondition
 	// when no network is configured: the bench does not manage Wi-Fi.
 	SetWifi(context.Context, *WifiRequest) (*emptypb.Empty, error)
+	// Uninstall every third-party package that is not in the device's baseline
+	// (recorded when the device was first seen, or BASELINE_PACKAGES), and
+	// force-stop / clear the configured apps. Used on release, before the
+	// Wi-Fi reset, so a suggestion a removed app registered goes with it.
+	// FailedPrecondition when no baseline is known for the device yet.
+	ResetPackages(context.Context, *ResetPackagesRequest) (*ResetPackagesResponse, error)
 	mustEmbedUnimplementedDeviceSourceServer()
 }
 
@@ -162,6 +185,9 @@ func (UnimplementedDeviceSourceServer) ForwardToDevice(grpc.BidiStreamingServer[
 }
 func (UnimplementedDeviceSourceServer) SetWifi(context.Context, *WifiRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetWifi not implemented")
+}
+func (UnimplementedDeviceSourceServer) ResetPackages(context.Context, *ResetPackagesRequest) (*ResetPackagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetPackages not implemented")
 }
 func (UnimplementedDeviceSourceServer) mustEmbedUnimplementedDeviceSourceServer() {}
 func (UnimplementedDeviceSourceServer) testEmbeddedByValue()                      {}
@@ -249,6 +275,24 @@ func _DeviceSource_SetWifi_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DeviceSource_ResetPackages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetPackagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).ResetPackages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_ResetPackages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).ResetPackages(ctx, req.(*ResetPackagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DeviceSource_ServiceDesc is the grpc.ServiceDesc for DeviceSource service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -263,6 +307,10 @@ var DeviceSource_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetWifi",
 			Handler:    _DeviceSource_SetWifi_Handler,
+		},
+		{
+			MethodName: "ResetPackages",
+			Handler:    _DeviceSource_ResetPackages_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

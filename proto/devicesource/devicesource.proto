@@ -17,6 +17,24 @@ service DeviceSource {
   // on this device source (WIFI_SSID / WIFI_PASSPHRASE). FailedPrecondition
   // when no network is configured: the bench does not manage Wi-Fi.
   rpc SetWifi(WifiRequest) returns (google.protobuf.Empty) {}
+  // Uninstall every third-party package that is not in the device's baseline
+  // (recorded when the device was first seen, or BASELINE_PACKAGES), and
+  // force-stop / clear the configured apps. Used on release, before the
+  // Wi-Fi reset, so a suggestion a removed app registered goes with it.
+  // FailedPrecondition when no baseline is known for the device yet.
+  rpc ResetPackages(ResetPackagesRequest) returns (ResetPackagesResponse) {}
+}
+
+message ResetPackagesRequest {
+  string serial = 1;
+}
+
+message ResetPackagesResponse {
+  // Packages uninstalled, sorted.
+  repeated string removed = 1;
+  // Wi-Fi suggestions that disappeared with them, as `cmd wifi
+  // list-all-suggestions` printed them (SSID and security type).
+  repeated string suggestions_removed = 2;
 }
 
 message WifiRequest {

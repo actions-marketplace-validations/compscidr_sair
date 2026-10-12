@@ -286,6 +286,31 @@ func (r *CommandRouter) AddReverseForward(serial string, port int) error {
 	return nil
 }
 
+// ResetPackages uninstalls what a job installed on a local device, through its
+// device source, and returns the packages and the Wi-Fi suggestions that went
+// with them. NotFound for a device this proxy has no source for; Unimplemented
+// from a device source that predates it.
+func (r *CommandRouter) ResetPackages(serial string) (removed, suggestions []string, err error) {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return nil, nil, status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	resp, err := client.ResetPackages(ctx, &dspb.ResetPackagesRequest{Serial: serial})
+	if err != nil {
+		return nil, nil, err
+	}
+	return resp.Removed, resp.SuggestionsRemoved, nil
+}
+
 // RemoveReverseForwards runs `adb reverse --remove-all` on a local device, so
 // a job that died before its own cleanup leaves no tunnel for the next one.
 // NotFound for a device this proxy has no source for (e.g. a relayed one).
