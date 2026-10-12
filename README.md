@@ -64,7 +64,10 @@ you:
   forgotten and the radio is toggled. The next job never inherits the last
   one's network.
 - **Mid-job**, `sair-wifi off` / `sair-wifi on` drop and restore the network
-  without the job knowing the credentials.
+  without the job knowing the credentials. Each phone is switched on its own,
+  so two phones can ask for opposite states at the same time.
+- **From the phone**, a test can toggle its own Wi-Fi between two assertions
+  with the lock's device token; see [Device-side Wi-Fi control](#device-side-wi-fi-control).
 
 Suggestions a test app registers under its own uid are not touched; the app
 cleans those up itself. Devices relayed from another proxy are left alone.
@@ -233,6 +236,7 @@ After eval, these environment variables are set:
 | `ANDROID_HOME` / `ANDROID_SDK_ROOT` | Shadow SDK under `$RUNNER_TEMP` (or `$TMPDIR`) whose `platform-tools/adb` calls the real adb with `-P <scoped port>`; only when an SDK was already set. Left in place so steps after `sair-release` keep working |
 | `ANDROID_SERIAL` | First serial (only set when a single device is acquired) |
 | `SAIR_PROXY_URL` | Proxy URL (for `sair-release`) |
+| `SAIR_DEVICE_TOKEN` / `SAIR_DEVICE_API_PORT` | Lock-scoped token and the port on each phone that reaches the proxy's `/wifi`; only when the proxy set them up. See [Device-side Wi-Fi control](#device-side-wi-fi-control) |
 
 **Release** the lock when done:
 
@@ -275,6 +279,61 @@ eval $(sair-acquire --url http://proxy-host:8550 --api-key my-key)
 # Release with explicit lock ID
 sair-release --lock-id <lock-id>
 ```
+
+### Device-side Wi-Fi control
+
+Some tests know best when they need the network: this one needs Internet, the
+next one must not have it, and the switch has to happen between two assertions
+on the phone. The tenant API key must never go onto the phone (it unlocks
+acquire/release for every job, and the next job can read what was left
+behind), so a lock gets its own short-lived token instead.
+
+On acquire the proxy mints a random **device token**, valid only for `POST
+/wifi`, only for serials in that lock, and only until the lock ends. It also
+runs `adb reverse tcp:<port> tcp:<port>` on each local phone, where `<port>` is
+the proxy's HTTP API port, so `127.0.0.1:<port>` on the phone reaches the proxy
+(this needs the proxy's HTTP API on the device source's host, which is the
+normal bench layout). `sair-acquire` exports both as `SAIR_DEVICE_TOKEN` and
+`SAIR_DEVICE_API_PORT`; pass them to the instrumentation along with the serial:
+
+```bash
+./gradlew connectedCheck \
+  -Pandroid.testInstrumentationRunnerArguments.sairDeviceToken="$SAIR_DEVICE_TOKEN" \
+  -Pandroid.testInstrumentationRunnerArguments.sairDeviceApiPort="$SAIR_DEVICE_API_PORT" \
+  -Pandroid.testInstrumentationRunnerArguments.sairLockId="$SAIR_LOCK_ID" \
+  -Pandroid.testInstrumentationRunnerArguments.sairSerial="$ANDROID_SERIAL"
+```
+
+On the phone a test then makes one plain HTTP call, no library needed. `on`
+returns once the phone reaches the Internet, so the test can carry on as soon
+as the call does; `off` drops the network:
+
+```kotlin
+fun sairWifi(on: Boolean) {
+    val args = InstrumentationRegistry.getArguments()
+    val url = "http://127.0.0.1:${args.getString("sairDeviceApiPort")}/wifi" +
+        "?lock_id=${args.getString("sairLockId")}" +
+        "&serial=${Uri.encode(args.getString("sairSerial"))}" +
+        "&state=${if (on) "on" else "off"}"
+    val conn = URL(url).openConnection() as HttpURLConnection
+    conn.requestMethod = "POST"
+    conn.setRequestProperty("x-device-token", args.getString("sairDeviceToken"))
+    conn.readTimeout = 90_000 // "on" waits for Internet, up to the bench's timeout
+    check(conn.responseCode == 200) { "sair wifi: HTTP ${conn.responseCode}" }
+}
+```
+
+This is plain HTTP to `127.0.0.1`, so the app under test must permit cleartext
+there: from targetSdk 28 the platform default refuses it with `Cleartext HTTP
+traffic to 127.0.0.1 not permitted`. Allow it in the debug build's network
+security config, or write the request line over a raw `Socket`, which the
+policy does not cover.
+
+With several phones in a lock, pass each its own serial (`SAIR_SERIALS` lists
+them). The serial is required with a device token: the proxy cannot tell which
+phone a reverse-forwarded connection came from. Devices relayed from another
+proxy get no token access; their Wi-Fi is not managed at all. The forward is
+removed with the lock, like every other `adb reverse` a job leaves behind.
 
 ## Deployment
 

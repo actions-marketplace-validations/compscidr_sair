@@ -2,8 +2,11 @@ package proxy
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	dspb "github.com/compscidr/sair/proto/devicesource"
 	pb "github.com/compscidr/sair/proto/orchestrator"
@@ -53,4 +56,153 @@ func TestScopedPortWifi(t *testing.T) {
 	if !reflect.DeepEqual(calls, want) {
 		t.Errorf("calls = %q, want %q", calls, want)
 	}
+}
+
+// Two phones in one lock change state in parallel: each setWifi waits at a
+// barrier for the other to arrive, which only clears when the calls overlap
+// (sair#84). The same phone still serializes, so ON then OFF stays ordered.
+func TestScopedPortWifiFansOutPerDevice(t *testing.T) {
+	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
+	var barrier sync.WaitGroup
+	barrier.Add(2)
+	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+		barrier.Done()
+		barrier.Wait()
+		return nil
+	}
+	if _, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}, "B": {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- m.SetWifi("L1", nil, true) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SetWifi serialized the two devices")
+	}
+
+	// Same serial: the second call must wait for the first.
+	release := make(chan struct{})
+	var order []string
+	var mu sync.Mutex
+	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+		if state == dspb.WifiRequest_ON {
+			<-release
+		}
+		mu.Lock()
+		order = append(order, state.String())
+		mu.Unlock()
+		return nil
+	}
+	first := make(chan error, 1)
+	go func() { first <- m.SetWifi("L1", []string{"A"}, true) }()
+	time.Sleep(50 * time.Millisecond) // let the ON take A's lock before the OFF asks for it
+	second := make(chan error, 1)
+	go func() { second <- m.SetWifi("L1", []string{"A"}, false) }()
+	select {
+	case <-second:
+		t.Fatal("OFF on A ran while ON on A was still in progress")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	<-first
+	<-second
+	if want := []string{"ON", "OFF"}; !reflect.DeepEqual(order, want) {
+		t.Errorf("order = %v, want %v", order, want)
+	}
+}
+
+// Acquire mints a device token and reverse-forwards the HTTP API onto each
+// local phone (not the relayed one), so a test on the phone can reach /wifi
+// (sair#83). A phone that refuses the forward leaves the port unset.
+func TestAcquireSetsUpDeviceAPI(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{
+		LockId:        "L1",
+		Serials:       []string{"A", "R"},
+		RemoteDevices: []*pb.DeviceInfo{{Serial: "R"}},
+	}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	m.DeviceAPIPort = 8550
+	var forwards []string
+	m.addReverse = func(serial string, port int) error {
+		forwards = append(forwards, fmt.Sprintf("%s:%d", serial, port))
+		return nil
+	}
+	sp, err := m.Acquire(nil, 0, "", "", 0, false, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sp.DeviceToken) != 32 || sp.DeviceAPIPort != 8550 {
+		t.Errorf("token %q port %d", sp.DeviceToken, sp.DeviceAPIPort)
+	}
+	if want := []string{"A:8550"}; !reflect.DeepEqual(forwards, want) {
+		t.Errorf("forwards = %v, want %v", forwards, want)
+	}
+	if !m.DeviceTokenValid("L1", sp.DeviceToken) || m.DeviceTokenValid("L1", "nope") || m.DeviceTokenValid("L2", sp.DeviceToken) {
+		t.Error("DeviceTokenValid")
+	}
+	m.CloseScopedPort("L1")
+	if m.DeviceTokenValid("L1", sp.DeviceToken) {
+		t.Error("token outlived the lock")
+	}
+
+	m.addReverse = func(string, int) error { return errors.New("cannot bind") }
+	fake.resp.LockId = "L2"
+	sp, err = m.Acquire(nil, 0, "", "", 0, false, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sp.DeviceAPIPort != 0 {
+		t.Errorf("port = %d after a failed forward, want 0", sp.DeviceAPIPort)
+	}
+}
+
+// An expired lock's reset that queued behind the next lock's ON on the same
+// phone must notice, under the lock, that the phone has a new owner and
+// leave it alone: otherwise the new job starts offline with no device API.
+func TestResetSkipsPhoneRelockedWhileWaiting(t *testing.T) {
+	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
+	var mu sync.Mutex
+	var calls []string
+	release := make(chan struct{})
+	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+		mu.Lock()
+		calls = append(calls, serial+" "+state.String())
+		mu.Unlock()
+		if state == dspb.WifiRequest_ON {
+			<-release
+		}
+		return nil
+	}
+	m.removeReverse = func(serial string) error {
+		mu.Lock()
+		calls = append(calls, serial+" unreverse")
+		mu.Unlock()
+		return nil
+	}
+	if _, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	// L1 expired on the orchestrator, which granted A to L2; L2's ON is in
+	// flight when L1's expiry callback runs.
+	if _, err := m.CreateScopedPort("L2", map[string]struct{}{"A": {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	on := make(chan error, 1)
+	go func() { on <- m.SetWifi("L2", nil, true) }()
+	time.Sleep(50 * time.Millisecond)
+	closed := make(chan struct{})
+	go func() { m.OnLockExpired("L1"); close(closed) }()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	<-on
+	<-closed
+
+	if want := []string{"A ON"}; !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls = %q, want %q", calls, want)
+	}
+	m.CloseScopedPort("L2")
 }
