@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -359,5 +360,65 @@ func TestAcquireVerifiesWifiStateEitherWay(t *testing.T) {
 		if fake.lastRelease == nil || fake.lastRelease.LockId != "L1" {
 			t.Errorf("wifi=%v: lock not released after the Wi-Fi failure", wifi)
 		}
+	}
+}
+
+// Acquire hands out an awake, unlocked phone (sair#92): a keyguard the
+// device source cannot dismiss costs the lock, like a bad Wi-Fi state.
+func TestAcquireFailsWhenPhoneStaysLocked(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	m.setWifi = func(string, dspb.WifiRequest_State) error { return nil }
+	m.removeReverse = func(string) error { return nil }
+	woke := 0
+	m.wake = func(string) error {
+		woke++
+		return status.Error(codes.FailedPrecondition, "A: screen locked")
+	}
+	if _, err := m.Acquire(nil, 0, "", "", 0, true, false, ""); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("err = %v, want FailedPrecondition", err)
+	}
+	if fake.lastRelease == nil || fake.lastRelease.LockId != "L1" {
+		t.Error("lock not released after the wake failure")
+	}
+	if woke == 0 {
+		t.Error("wake never called on acquire")
+	}
+}
+
+// Release resets in this order: packages, uptime reboot, Wi-Fi reset, wake
+// (sair#93, sair#92). A reboot is written to the lock log.
+func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	var steps []string
+	m.removeReverse = func(string) error { return nil }
+	m.resetPackages = func(string) ([]string, []string, error) { steps = append(steps, "packages"); return nil, nil, nil }
+	m.rebootIfStale = func(string) (bool, time.Duration, error) {
+		steps = append(steps, "reboot")
+		return true, 30 * time.Hour, nil
+	}
+	m.setWifi = func(_ string, st dspb.WifiRequest_State) error {
+		steps = append(steps, "wifi "+st.String())
+		return nil
+	}
+	m.wake = func(string) error { steps = append(steps, "wake"); return nil }
+	if _, err := m.Acquire(nil, 0, "", "", 0, false, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	steps = nil
+	m.Release("L1", "ok")
+	want := []string{"packages", "reboot", "wifi RESET", "wake"}
+	if !reflect.DeepEqual(steps, want) {
+		t.Errorf("release steps = %q, want %q", steps, want)
+	}
+	found := false
+	for _, e := range fake.lastRelease.GetLog() {
+		if strings.Contains(e.Service, "rebooted after release (uptime 30h0m0s)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("lock log has no reboot line: %v", fake.lastRelease.GetLog())
 	}
 }

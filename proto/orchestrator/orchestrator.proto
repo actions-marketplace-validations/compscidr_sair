@@ -47,6 +47,12 @@ message DeviceInfo {
   // so the portal warns before it is shared. Empty when none are found, or from
   // device sources that predate the field.
   repeated string account_types = 7;
+  // When sair last rebooted the device (uptime reboot on release), unix ms;
+  // 0 if never since the device source started.
+  int64 last_reboot_ms = 8;
+  // Why the device is not ready for a job, for the bench owner: a keyguard
+  // sair could not dismiss, with what to do about it. Empty when fine.
+  string warning = 9;
 }
 
 // A lock request either names the devices it wants (serials) or asks for a

@@ -26,6 +26,8 @@ const (
 	DeviceSource_ForwardToDevice_FullMethodName = "/devicesource.DeviceSource/ForwardToDevice"
 	DeviceSource_SetWifi_FullMethodName         = "/devicesource.DeviceSource/SetWifi"
 	DeviceSource_ResetPackages_FullMethodName   = "/devicesource.DeviceSource/ResetPackages"
+	DeviceSource_Wake_FullMethodName            = "/devicesource.DeviceSource/Wake"
+	DeviceSource_RebootIfStale_FullMethodName   = "/devicesource.DeviceSource/RebootIfStale"
 )
 
 // DeviceSourceClient is the client API for DeviceSource service.
@@ -49,6 +51,16 @@ type DeviceSourceClient interface {
 	// Wi-Fi reset, so a suggestion a removed app registered goes with it.
 	// FailedPrecondition when no baseline is known for the device yet.
 	ResetPackages(ctx context.Context, in *ResetPackagesRequest, opts ...grpc.CallOption) (*ResetPackagesResponse, error)
+	// Wake the screen and dismiss the keyguard, verified (sair#92). Used on
+	// acquire and after the release reset, so a job never gets a phone asleep
+	// or on its lock screen. FailedPrecondition when the keyguard stays up,
+	// which on a bench phone means a secure lock sair cannot dismiss.
+	Wake(ctx context.Context, in *WakeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Reboot the device if it has been up longer than REBOOT_UPTIME_HOURS and
+	// wait until it has booted (sair#93). The caller makes sure the device is
+	// unacquired and wakes it afterwards. A no-op below the limit or when the
+	// limit is 0.
+	RebootIfStale(ctx context.Context, in *RebootRequest, opts ...grpc.CallOption) (*RebootResponse, error)
 }
 
 type deviceSourceClient struct {
@@ -140,6 +152,26 @@ func (c *deviceSourceClient) ResetPackages(ctx context.Context, in *ResetPackage
 	return out, nil
 }
 
+func (c *deviceSourceClient) Wake(ctx context.Context, in *WakeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, DeviceSource_Wake_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *deviceSourceClient) RebootIfStale(ctx context.Context, in *RebootRequest, opts ...grpc.CallOption) (*RebootResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RebootResponse)
+	err := c.cc.Invoke(ctx, DeviceSource_RebootIfStale_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeviceSourceServer is the server API for DeviceSource service.
 // All implementations must embed UnimplementedDeviceSourceServer
 // for forward compatibility.
@@ -161,6 +193,16 @@ type DeviceSourceServer interface {
 	// Wi-Fi reset, so a suggestion a removed app registered goes with it.
 	// FailedPrecondition when no baseline is known for the device yet.
 	ResetPackages(context.Context, *ResetPackagesRequest) (*ResetPackagesResponse, error)
+	// Wake the screen and dismiss the keyguard, verified (sair#92). Used on
+	// acquire and after the release reset, so a job never gets a phone asleep
+	// or on its lock screen. FailedPrecondition when the keyguard stays up,
+	// which on a bench phone means a secure lock sair cannot dismiss.
+	Wake(context.Context, *WakeRequest) (*emptypb.Empty, error)
+	// Reboot the device if it has been up longer than REBOOT_UPTIME_HOURS and
+	// wait until it has booted (sair#93). The caller makes sure the device is
+	// unacquired and wakes it afterwards. A no-op below the limit or when the
+	// limit is 0.
+	RebootIfStale(context.Context, *RebootRequest) (*RebootResponse, error)
 	mustEmbedUnimplementedDeviceSourceServer()
 }
 
@@ -188,6 +230,12 @@ func (UnimplementedDeviceSourceServer) SetWifi(context.Context, *WifiRequest) (*
 }
 func (UnimplementedDeviceSourceServer) ResetPackages(context.Context, *ResetPackagesRequest) (*ResetPackagesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResetPackages not implemented")
+}
+func (UnimplementedDeviceSourceServer) Wake(context.Context, *WakeRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method Wake not implemented")
+}
+func (UnimplementedDeviceSourceServer) RebootIfStale(context.Context, *RebootRequest) (*RebootResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RebootIfStale not implemented")
 }
 func (UnimplementedDeviceSourceServer) mustEmbedUnimplementedDeviceSourceServer() {}
 func (UnimplementedDeviceSourceServer) testEmbeddedByValue()                      {}
@@ -293,6 +341,42 @@ func _DeviceSource_ResetPackages_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DeviceSource_Wake_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WakeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).Wake(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_Wake_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).Wake(ctx, req.(*WakeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DeviceSource_RebootIfStale_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RebootRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).RebootIfStale(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_RebootIfStale_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).RebootIfStale(ctx, req.(*RebootRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DeviceSource_ServiceDesc is the grpc.ServiceDesc for DeviceSource service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -311,6 +395,14 @@ var DeviceSource_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResetPackages",
 			Handler:    _DeviceSource_ResetPackages_Handler,
+		},
+		{
+			MethodName: "Wake",
+			Handler:    _DeviceSource_Wake_Handler,
+		},
+		{
+			MethodName: "RebootIfStale",
+			Handler:    _DeviceSource_RebootIfStale_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

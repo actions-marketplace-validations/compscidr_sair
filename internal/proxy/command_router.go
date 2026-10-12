@@ -311,6 +311,51 @@ func (r *CommandRouter) ResetPackages(serial string) (removed, suggestions []str
 	return resp.Removed, resp.SuggestionsRemoved, nil
 }
 
+// Wake wakes a local device and dismisses its keyguard, verified, through
+// its device source (sair#92). NotFound for a device this proxy has no
+// source for; Unimplemented from a device source that predates it.
+func (r *CommandRouter) Wake(serial string) error {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	_, err = client.Wake(ctx, &dspb.WakeRequest{Serial: serial})
+	return err
+}
+
+// RebootIfStale reboots a local device whose uptime is over the device
+// source's limit and returns once it is back (sair#93). NotFound for a device
+// this proxy has no source for; Unimplemented from an older device source.
+func (r *CommandRouter) RebootIfStale(serial string) (rebooted bool, uptime time.Duration, err error) {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return false, 0, status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return false, 0, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	resp, err := client.RebootIfStale(ctx, &dspb.RebootRequest{Serial: serial})
+	if err != nil {
+		return false, 0, err
+	}
+	return resp.Rebooted, time.Duration(resp.UptimeSeconds) * time.Second, nil
+}
+
 // RemoveReverseForwards runs `adb reverse --remove-all` on a local device, so
 // a job that died before its own cleanup leaves no tunnel for the next one.
 // NotFound for a device this proxy has no source for (e.g. a relayed one).
