@@ -86,10 +86,16 @@ type ScopedPortManager struct {
 	setWifi func(serial string, state dspb.WifiRequest_State) error
 	// removeReverse is commandRouter.RemoveReverseForwards; tests swap it.
 	removeReverse func(serial string) error
-	// wifiMu orders Wi-Fi changes so a released lock's reset can never land
-	// after the next lock's connect on the same device.
-	// ponytail: one lock for every device, per-serial locks if benches grow large.
-	wifiMu sync.Mutex
+	// wifiMu holds one *sync.Mutex per serial. It orders Wi-Fi changes on a
+	// device so a released lock's reset can never land after the next lock's
+	// connect, while one phone's ON wait never blocks another phone's OFF.
+	// ponytail: entries are never dropped; one per serial ever seen is fine.
+	wifiMu sync.Map
+}
+
+func (m *ScopedPortManager) wifiLock(serial string) *sync.Mutex {
+	mu, _ := m.wifiMu.LoadOrStore(serial, &sync.Mutex{})
+	return mu.(*sync.Mutex)
 }
 
 func NewScopedPortManager(
@@ -176,10 +182,21 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 	if on {
 		state = dspb.WifiRequest_ON
 	}
-	m.wifiMu.Lock()
-	defer m.wifiMu.Unlock()
-	for _, s := range serials {
-		if err := m.setWifi(s, state); err != nil {
+	// Fan out: a lock's three phones take one join time, not three, and two
+	// phones asking for opposite states at once (sair#84) do not queue.
+	errs := make([]error, len(serials))
+	var wg sync.WaitGroup
+	for i, s := range serials {
+		wg.Go(func() {
+			mu := m.wifiLock(s)
+			mu.Lock()
+			defer mu.Unlock()
+			errs[i] = m.setWifi(s, state)
+		})
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
 			return err
 		}
 	}
@@ -190,18 +207,23 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 // forwards, Wi-Fi reset. A device a newer lock already holds is skipped: its
 // job owns the state now.
 func (m *ScopedPortManager) resetDevices(sp *ScopedPort) {
-	m.wifiMu.Lock()
-	defer m.wifiMu.Unlock()
 	for serial := range sp.Serials {
 		if _, remote := sp.RemoteDevices[serial]; remote || m.heldByAnyPort(serial) {
 			continue
 		}
-		if err := m.removeReverse(serial); err != nil && status.Code(err) != codes.NotFound {
-			slog.Warn("removing reverse forwards failed", "serial", serial, "lockId", sp.LockID, "error", err)
-		}
-		if err := m.setWifi(serial, dspb.WifiRequest_RESET); err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound {
-			slog.Warn("Wi-Fi reset failed", "serial", serial, "lockId", sp.LockID, "error", err)
-		}
+		m.resetDevice(sp.LockID, serial)
+	}
+}
+
+func (m *ScopedPortManager) resetDevice(lockID, serial string) {
+	mu := m.wifiLock(serial)
+	mu.Lock()
+	defer mu.Unlock()
+	if err := m.removeReverse(serial); err != nil && status.Code(err) != codes.NotFound {
+		slog.Warn("removing reverse forwards failed", "serial", serial, "lockId", lockID, "error", err)
+	}
+	if err := m.setWifi(serial, dspb.WifiRequest_RESET); err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound {
+		slog.Warn("Wi-Fi reset failed", "serial", serial, "lockId", lockID, "error", err)
 	}
 }
 
