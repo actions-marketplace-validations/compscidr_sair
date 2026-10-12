@@ -43,6 +43,7 @@ The SAIR device source. Takes no arguments; it is configured through env vars:
                                 each phone's packages when first seen (set but empty keeps none)
   RESET_FORCE_STOP              Apps force-stopped on release (default: com.android.chrome,com.google.android.gm)
   RESET_CLEAR_PACKAGES          Apps whose data is cleared on release (default: none; clearing Chrome signs it out)
+  REBOOT_UPTIME_HOURS           Reboot a phone on release once it has been up this long (default: 24; 0 = never)
   SAIR_LOG_LEVEL                debug, info, warn or error (default: info)
   SAIR_AUTO_UPDATE              false disables updating to the latest release on start
   GITHUB_TOKEN                  Optional token for the auto-updater's GitHub API calls
@@ -131,6 +132,8 @@ type deviceInfo struct {
 	Sdk          int32    `json:"sdk"`
 	Release      int32    `json:"release"`
 	AccountTypes []string `json:"account_types,omitempty"`
+	LastRebootMs int64    `json:"last_reboot_ms,omitempty"`
+	Warning      string   `json:"warning,omitempty"`
 }
 
 func reportDevices(dsServer *devicesource.Server, proxyAddr, sourceAddr, apiKey string, stop chan struct{}) {
@@ -154,6 +157,8 @@ func reportDevices(dsServer *devicesource.Server, proxyAddr, sourceAddr, apiKey 
 				Sdk:          d.Sdk,
 				Release:      d.Release,
 				AccountTypes: d.AccountTypes,
+				LastRebootMs: d.LastRebootMs,
+				Warning:      d.Warning,
 			})
 		}
 

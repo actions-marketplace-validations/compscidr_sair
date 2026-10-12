@@ -79,6 +79,24 @@ you:
   `if: always()` release step, its runner died, or the proxy was down when
   the lock expired, is cleaned up by the next job, whose lock log then shows
   `sair: uninstalled … (left by an earlier job)`.
+- **Awake and unlocked**, on acquire and again after the release reset: the
+  screen is woken and the keyguard dismissed, then verified (`dumpsys power`
+  says `Awake`, `dumpsys window policy` says the keyguard is not showing),
+  with up to three attempts since a one-shot dismiss can race on some phones.
+  A phone whose keyguard stays up fails the acquire with `screen locked`; that
+  means a PIN, pattern or password is set, which sair cannot dismiss, so set
+  the phone's screen lock to Swipe or None. The reason is also reported as
+  the device's `warning` (proxy `/status`, device report) until a wake
+  succeeds. A phone with `stay_on_while_plugged_in` off is logged as a
+  warning, since it will sleep and re-lock between steps.
+- **Rebooted on release** once its uptime is over `REBOOT_UPTIME_HOURS`
+  (24 by default), while the phone is unacquired: the reset waits for the
+  boot and the wake above before the next acquire of that phone can proceed,
+  and the phone is not offered while it is down. The lock log gets
+  `sair: rebooted after release (uptime …)` and the proxy's `/status` lists
+  each phone's `last_reboot`. This runs before the Wi-Fi reset, so the
+  offline wait is not spent twice. The wake and the reboot run whether or
+  not the bench manages Wi-Fi.
 
 A bench that was already running jobs has phones carrying the last job's
 packages, so "first seen" would record those into the baseline. A test package
@@ -189,6 +207,7 @@ modification.
 | `BASELINE_PACKAGES` | — | Third-party packages kept on release, comma-separated. Unset: each phone's packages are recorded when first seen, minus installed test-package/target pairs. Set but empty: keep none. Set it explicitly on a bench that was in use before this version |
 | `RESET_FORCE_STOP` | `com.android.chrome,com.google.android.gm` | Apps force-stopped on release |
 | `RESET_CLEAR_PACKAGES` | — | Apps whose data is cleared (`pm clear`) on release. Off by default: clearing Chrome on a signed-in phone signs it out |
+| `REBOOT_UPTIME_HOURS` | `24` | Reboot a phone on release once it has been up this long, before the next job gets it. `0` never reboots |
 | `SAIR_LOG_LEVEL` | `info` | `debug` adds per-chunk byte counts for every forward, for tracing a stalled transfer |
 
 A phone left out by `DEVICE_SERIALS` / `EXCLUDE_SERIALS` is never reported,

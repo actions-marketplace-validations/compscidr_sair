@@ -23,6 +23,30 @@ service DeviceSource {
   // Wi-Fi reset, so a suggestion a removed app registered goes with it.
   // FailedPrecondition when no baseline is known for the device yet.
   rpc ResetPackages(ResetPackagesRequest) returns (ResetPackagesResponse) {}
+  // Wake the screen and dismiss the keyguard, verified (sair#92). Used on
+  // acquire and after the release reset, so a job never gets a phone asleep
+  // or on its lock screen. FailedPrecondition when the keyguard stays up,
+  // which on a bench phone means a secure lock sair cannot dismiss.
+  rpc Wake(WakeRequest) returns (google.protobuf.Empty) {}
+  // Reboot the device if it has been up longer than REBOOT_UPTIME_HOURS and
+  // wait until it has booted (sair#93). The caller makes sure the device is
+  // unacquired and wakes it afterwards. A no-op below the limit or when the
+  // limit is 0.
+  rpc RebootIfStale(RebootRequest) returns (RebootResponse) {}
+}
+
+message WakeRequest {
+  string serial = 1;
+}
+
+message RebootRequest {
+  string serial = 1;
+}
+
+message RebootResponse {
+  bool rebooted = 1;
+  // Uptime before the call, in seconds.
+  int64 uptime_seconds = 2;
 }
 
 message ResetPackagesRequest {
@@ -64,6 +88,12 @@ message Device {
   // Distinct types of the accounts signed in on the device (e.g. com.google),
   // sorted; never their names. Empty when none are found.
   repeated string account_types = 6;
+  // When sair last rebooted the device (RebootIfStale), unix ms; 0 if never
+  // since this device source started.
+  int64 last_reboot_ms = 7;
+  // Why the device is not ready for a job, for a bench owner to act on:
+  // currently a keyguard sair could not dismiss. Empty when fine.
+  string warning = 8;
 }
 
 message Command {

@@ -1,0 +1,82 @@
+package devicesource
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strconv"
+	"strings"
+	"time"
+
+	pb "github.com/compscidr/sair/proto/devicesource"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// RebootIfStale (sair#93) reboots a phone that has been up longer than
+// REBOOT_UPTIME_HOURS and returns once it has booted. The proxy calls it on
+// release, under the phone's reset lock, so the reboot happens while the
+// phone is unacquired and the next acquire waits for it instead of getting
+// a phone mid-boot. Waking and unlocking afterwards is the proxy's Wake call.
+func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.RebootResponse, error) {
+	if err := s.checkSerial(req.Serial); err != nil {
+		return nil, err
+	}
+	out, err := s.shell(ctx, req.Serial, "cat /proc/uptime")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%s: uptime: %v", req.Serial, err)
+	}
+	uptime, err := parseUptime(out)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%s: uptime: %v", req.Serial, err)
+	}
+	resp := &pb.RebootResponse{UptimeSeconds: int64(uptime.Seconds())}
+	if s.rebootAfter <= 0 || uptime < s.rebootAfter {
+		return resp, nil
+	}
+	before, _ := s.shell(ctx, req.Serial, "cat /proc/sys/kernel/random/boot_id")
+	before = strings.TrimSpace(before)
+	slog.Info("rebooting: uptime over the limit", "serial", req.Serial, "uptime", uptime.Round(time.Minute), "limit", s.rebootAfter)
+	// The connection drops as the phone goes down, so the command's own
+	// error says nothing; the boot_id changing is what proves it rebooted.
+	s.shell(ctx, req.Serial, "reboot")
+	err = s.waitFor(ctx, s.rebootTimeout, req.Serial+" not back after reboot", func() error {
+		out, err := s.shell(ctx, req.Serial, "cat /proc/sys/kernel/random/boot_id; getprop sys.boot_completed")
+		if err != nil {
+			return err
+		}
+		id, completed, _ := strings.Cut(strings.TrimSpace(out), "\n")
+		switch {
+		case strings.TrimSpace(id) == before:
+			return fmt.Errorf("still the old boot")
+		case strings.TrimSpace(completed) != "1":
+			return fmt.Errorf("sys.boot_completed=%q", strings.TrimSpace(completed))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp.Rebooted = true
+	s.stateMu.Lock()
+	if s.reboots == nil {
+		s.reboots = make(map[string]time.Time)
+	}
+	s.reboots[req.Serial] = time.Now()
+	s.stateMu.Unlock()
+	slog.Info("rebooted", "serial", req.Serial)
+	return resp, nil
+}
+
+// parseUptime reads /proc/uptime: "<seconds up> <idle seconds>".
+func parseUptime(out string) (time.Duration, error) {
+	f := strings.Fields(out)
+	if len(f) == 0 {
+		return 0, fmt.Errorf("empty /proc/uptime")
+	}
+	secs, err := strconv.ParseFloat(f[0], 64)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(secs * float64(time.Second)), nil
+}

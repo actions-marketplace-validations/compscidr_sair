@@ -100,6 +100,10 @@ type ScopedPortManager struct {
 	addReverse func(serial string, port int) error
 	// resetPackages is commandRouter.ResetPackages; tests swap it.
 	resetPackages func(serial string) (removed, suggestions []string, err error)
+	// wake is commandRouter.Wake; tests swap it.
+	wake func(serial string) error
+	// rebootIfStale is commandRouter.RebootIfStale; tests swap it.
+	rebootIfStale func(serial string) (rebooted bool, uptime time.Duration, err error)
 	// DeviceAPIPort is the proxy's HTTP API port, reverse-forwarded onto each
 	// local phone on acquire so a test can call POST /wifi with the lock's
 	// device token. 0 disables it. The forward lands on the device source's
@@ -135,6 +139,8 @@ func NewScopedPortManager(
 		removeReverse:         commandRouter.RemoveReverseForwards,
 		addReverse:            commandRouter.AddReverseForward,
 		resetPackages:         commandRouter.ResetPackages,
+		wake:                  commandRouter.Wake,
+		rebootIfStale:         commandRouter.RebootIfStale,
 	}
 }
 
@@ -149,6 +155,9 @@ func NewScopedPortManager(
 // first rather than trusting the previous release's reset (sair#86). Either
 // way a device that cannot be put in that state releases the lock and
 // returns the error. A bench without managed Wi-Fi skips this.
+//
+// Every local device is also awake with its keyguard dismissed, verified
+// (sair#92); one that stays locked costs the lock the same way.
 //
 // With sameProxy, the orchestrator grants every device from a single proxy.
 func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count int32, repo, runURL string, priority int32, wifi, sameProxy bool, tenantKey string) (*ScopedPort, error) {
@@ -176,7 +185,12 @@ func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count 
 		mu := m.wifiLock(serial)
 		mu.Lock()
 		m.cleanDevice(sp, serial, " (left by an earlier job)")
+		err := m.wake(serial)
 		mu.Unlock()
+		if err != nil && status.Code(err) != codes.Unimplemented && status.Code(err) != codes.NotFound {
+			m.Release(sp.LockID, "error")
+			return nil, err
+		}
 	}
 	m.setupDeviceAPI(sp)
 	if err := m.SetWifi(sp.LockID, nil, wifi); err != nil && !wifiUnmanaged(err) {
@@ -267,7 +281,8 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 }
 
 // resetDevices returns a closed port's devices to baseline: no reverse
-// forwards, the job's packages gone, Wi-Fi reset. A device a newer lock
+// forwards, the job's packages gone, rebooted if its uptime is over the
+// bench's limit, Wi-Fi reset, awake and unlocked. A device a newer lock
 // already holds is skipped: its job owns the state now.
 func (m *ScopedPortManager) resetDevices(sp *ScopedPort) {
 	for serial := range sp.Serials {
@@ -292,9 +307,44 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 	// bench network goes with the app, so the reset's offline wait is not
 	// spent on a phone that keeps re-joining (sair#76).
 	m.cleanDevice(sp, serial, "")
+	// Reboot before the Wi-Fi reset: a fresh boot has nothing to forget, so
+	// the offline wait is not spent twice (sair#93). The serial lock is held
+	// throughout, so the next acquire of this phone waits for the boot.
+	rebooted, uptime, err := m.rebootIfStale(serial)
+	switch c := status.Code(err); {
+	case err == nil && rebooted:
+		slog.Info("rebooted on release: uptime was over the bench limit", "serial", serial, "lockId", lockID, "uptime", uptime)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: fmt.Sprintf("sair: rebooted after release (uptime %s)", uptime.Round(time.Minute))})
+		m.waitForSource(serial)
+	case err == nil, c == codes.NotFound, c == codes.Unimplemented:
+	default:
+		slog.Warn("uptime reboot failed; the phone may be mid-boot", "serial", serial, "lockId", lockID, "error", err)
+	}
 	if err := m.setWifi(serial, dspb.WifiRequest_RESET); err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound {
 		slog.Warn("Wi-Fi reset failed", "serial", serial, "lockId", lockID, "error", err)
 	}
+	// Awake and unlocked for the next tenant (sair#92). The next acquire
+	// verifies again and fails loudly; this just makes that the rare path.
+	if err := m.wake(serial); err != nil && status.Code(err) != codes.Unimplemented && status.Code(err) != codes.NotFound {
+		slog.Warn("wake after release failed; the next acquire of this phone will fail until it is fixed", "serial", serial, "lockId", lockID, "error", err)
+	}
+}
+
+// waitForSource waits, briefly, until the device list names serial again:
+// a rebooted phone drops out of `adb devices` and so out of the device
+// report, and the next acquire's reset would get NotFound for it until the
+// report after the boot. Bounded; a phone that stays gone is not this
+// function's problem.
+func (m *ScopedPortManager) waitForSource(serial string) {
+	if m.commandRouter == nil || m.commandRouter.ResolveSource == nil {
+		return
+	}
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(time.Second) {
+		if m.commandRouter.ResolveSource(serial) != "" {
+			return
+		}
+	}
+	slog.Warn("rebooted phone is not back in the device list yet", "serial", serial)
 }
 
 // cleanDevice removes a phone's reverse forwards and the packages a job

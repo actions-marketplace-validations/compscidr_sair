@@ -37,6 +37,16 @@ type Server struct {
 	// shell runs a command line on a device; adbShell, swapped in tests.
 	shell func(ctx context.Context, serial, command string) (string, error)
 
+	// wakeTimeout bounds one wake + dismiss-keyguard attempt (see wake).
+	wakeTimeout time.Duration
+	// rebootAfter is REBOOT_UPTIME_HOURS; 0 disables the uptime reboot.
+	// rebootTimeout bounds the wait for a phone to be back.
+	rebootAfter, rebootTimeout time.Duration
+	// Per-serial screen outcome (Device.warning) and last sair reboot.
+	stateMu  sync.Mutex
+	warnings map[string]string
+	reboots  map[string]time.Time
+
 	// Forward watchdog (see forwardWatch); 0 means the default.
 	stallTimeout, idleWarnInterval time.Duration
 
@@ -77,7 +87,13 @@ func NewServer() *Server {
 		wifiPingHost:   "dns.google", // a hostname, so the check proves DNS too
 		wifiTimeout:    60 * time.Second,
 		wifiOffTimeout: 20 * time.Second,
+		wakeTimeout:    5 * time.Second,
+		rebootAfter:    24 * time.Hour,
+		rebootTimeout:  5 * time.Minute,
 		stopPackages:   packageList("com.android.chrome,com.google.android.gm"),
+	}
+	if v, err := strconv.ParseFloat(os.Getenv("REBOOT_UPTIME_HOURS"), 64); err == nil && v >= 0 {
+		s.rebootAfter = time.Duration(v * float64(time.Hour))
 	}
 	if v, ok := os.LookupEnv("RESET_FORCE_STOP"); ok {
 		s.stopPackages = packageList(v)
@@ -228,6 +244,10 @@ func (s *Server) getDeviceInfo(serial string) (*pb.Device, error) {
 	sdk, _ := strconv.Atoi(sdkStr)
 	s.recordBaseline(serial)
 
+	var lastReboot int64
+	if t := s.lastReboot(serial); !t.IsZero() {
+		lastReboot = t.UnixMilli()
+	}
 	return &pb.Device{
 		Serial:       serial,
 		Manufacturer: manufacturer,
@@ -235,6 +255,8 @@ func (s *Server) getDeviceInfo(serial string) (*pb.Device, error) {
 		Release:      int32(release),
 		Sdk:          int32(sdk),
 		AccountTypes: s.accountTypes(serial),
+		LastRebootMs: lastReboot,
+		Warning:      s.warning(serial),
 	}, nil
 }
 

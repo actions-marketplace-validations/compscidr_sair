@@ -329,7 +329,26 @@ func (a *HTTPApi) handleStatus(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"scoped_ports": portInfos, "version": version.Version})
+	// Per-phone state a bench owner acts on: when sair last rebooted it
+	// (sair#93) and why it is not ready, e.g. a lock screen sair cannot
+	// dismiss (sair#92).
+	type devInfo struct {
+		Serial     string `json:"serial"`
+		LastReboot string `json:"last_reboot,omitempty"`
+		Warning    string `json:"warning,omitempty"`
+	}
+	devices := []devInfo{}
+	if a.deviceListTracker != nil {
+		for _, d := range a.deviceListTracker.GetDevices() {
+			di := devInfo{Serial: d.Serial, Warning: d.Warning}
+			if d.LastRebootMs > 0 {
+				di.LastReboot = time.UnixMilli(d.LastRebootMs).UTC().Format(time.RFC3339)
+			}
+			devices = append(devices, di)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"scoped_ports": portInfos, "devices": devices, "version": version.Version})
 }
 
 type deviceReport struct {
@@ -344,6 +363,8 @@ type deviceInfo struct {
 	Sdk          int32    `json:"sdk"`
 	Release      int32    `json:"release"`
 	AccountTypes []string `json:"account_types,omitempty"`
+	LastRebootMs int64    `json:"last_reboot_ms,omitempty"`
+	Warning      string   `json:"warning,omitempty"`
 }
 
 func (a *HTTPApi) handleRegisterDevices(w http.ResponseWriter, r *http.Request) {
@@ -372,6 +393,8 @@ func (a *HTTPApi) handleRegisterDevices(w http.ResponseWriter, r *http.Request) 
 			Sdk:          d.Sdk,
 			Release:      d.Release,
 			AccountTypes: d.AccountTypes,
+			LastRebootMs: d.LastRebootMs,
+			Warning:      d.Warning,
 		})
 	}
 
