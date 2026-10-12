@@ -30,6 +30,11 @@
 #   SAIR_PROXY_URL            Proxy URL (for sair-release)
 #   ANDROID_ADB_SERVER_PORT   Scoped ADB port (stock adb binary reads this)
 #   ANDROID_SERIAL            First serial (only when single device acquired)
+#   SAIR_DEVICE_TOKEN         Lock-scoped token a test on a locked phone can
+#   SAIR_DEVICE_API_PORT      use to toggle its own Wi-Fi: POST /wifi on
+#                             127.0.0.1:$SAIR_DEVICE_API_PORT from the phone
+#                             (an adb reverse the proxy set up). The port is
+#                             only set when the proxy set up the reverse.
 #   ANDROID_HOME / ANDROID_SDK_ROOT
 #                             Shadow SDK whose platform-tools/adb has the
 #                             scoped port baked in (only when an SDK is set).
@@ -229,6 +234,8 @@ fi
 LOCK_ID=$(echo "$BODY" | grep -o '"lock_id":"[^"]*"' | head -1 | cut -d'"' -f4)
 SERIALS=$(echo "$BODY" | grep -o '"serials":\[[^]]*\]' | head -1 | tr -d '[]"' | sed 's/serials://g')
 SCOPED_PORT=$(echo "$BODY" | grep -o '"port":[0-9]*' | head -1 | cut -d':' -f2)
+DEVICE_TOKEN=$(echo "$BODY" | grep -o '"device_token":"[^"]*"' | head -1 | cut -d'"' -f4)
+DEVICE_API_PORT=$(echo "$BODY" | grep -o '"device_api_port":[0-9]*' | head -1 | cut -d':' -f2)
 FIRST_SERIAL=$(echo "$SERIALS" | cut -d',' -f1)
 
 if [[ -z "$LOCK_ID" ]]; then
@@ -290,6 +297,14 @@ emit_var ANDROID_ADB_SERVER_PORT "$SCOPED_PORT"
 SERIAL_COUNT=$(echo "$SERIALS" | tr ',' '\n' | wc -l)
 if [[ "$SERIAL_COUNT" -eq 1 ]]; then
     emit_var ANDROID_SERIAL "$FIRST_SERIAL"
+fi
+
+# Device-side Wi-Fi control (sair#83): pass these to the instrumentation so a
+# test on the phone can ask for its own network. An older proxy sends neither.
+if [[ -n "$DEVICE_TOKEN" && "${DEVICE_API_PORT:-0}" -gt 0 ]]; then
+    [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::add-mask::${DEVICE_TOKEN}" >&2
+    emit_var SAIR_DEVICE_TOKEN "$DEVICE_TOKEN"
+    emit_var SAIR_DEVICE_API_PORT "$DEVICE_API_PORT"
 fi
 
 SDK_SHIM=$(make_sdk_shim "$SCOPED_PORT")

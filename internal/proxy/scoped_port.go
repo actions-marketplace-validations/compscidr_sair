@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,6 +35,12 @@ type ScopedPort struct {
 	// RemoteDevices are granted devices reached through the relay, keyed by
 	// serial. nil for none.
 	RemoteDevices map[string]*pb.DeviceInfo
+	// DeviceToken lets a locked phone toggle its own Wi-Fi through POST /wifi
+	// (sair#83). Random per lock, dies with it, good for nothing else.
+	DeviceToken string
+	// DeviceAPIPort is the port on each local phone that reaches the proxy's
+	// HTTP API (an adb reverse set up on acquire); 0 when none was set up.
+	DeviceAPIPort int
 	// Stable transport ids for RemoteDevices, disjoint from the tracker's ids
 	// (which start at 1). One mutex guards both directions so they can never
 	// disagree: an id is only ever visible together with its reverse entry.
@@ -86,6 +95,13 @@ type ScopedPortManager struct {
 	setWifi func(serial string, state dspb.WifiRequest_State) error
 	// removeReverse is commandRouter.RemoveReverseForwards; tests swap it.
 	removeReverse func(serial string) error
+	// addReverse is commandRouter.AddReverseForward; tests swap it.
+	addReverse func(serial string, port int) error
+	// DeviceAPIPort is the proxy's HTTP API port, reverse-forwarded onto each
+	// local phone on acquire so a test can call POST /wifi with the lock's
+	// device token. 0 disables it. The forward lands on the device source's
+	// host, so the proxy must serve its HTTP API there (they share a bench).
+	DeviceAPIPort int
 	// wifiMu holds one *sync.Mutex per serial. It orders Wi-Fi changes on a
 	// device so a released lock's reset can never land after the next lock's
 	// connect, while one phone's ON wait never blocks another phone's OFF.
@@ -114,6 +130,7 @@ func NewScopedPortManager(
 		scopedPorts:           make(map[string]*ScopedPort),
 		setWifi:               commandRouter.SetWifi,
 		removeReverse:         commandRouter.RemoveReverseForwards,
+		addReverse:            commandRouter.AddReverseForward,
 	}
 }
 
@@ -142,6 +159,7 @@ func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count 
 		}
 		return nil, err
 	}
+	m.setupDeviceAPI(sp)
 	if wifi {
 		if err := m.SetWifi(sp.LockID, nil, true); err != nil && !wifiUnmanaged(err) {
 			m.Release(sp.LockID, "error")
@@ -149,6 +167,34 @@ func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count 
 		}
 	}
 	return sp, nil
+}
+
+// setupDeviceAPI reverse-forwards the proxy's HTTP API onto every local phone
+// of the lock. Best effort: a phone that refuses the forward only costs the
+// job the device-side control, not the lock. Nothing to do for a relayed
+// device: its adb reverse would end on the other proxy's host.
+func (m *ScopedPortManager) setupDeviceAPI(sp *ScopedPort) {
+	if m.DeviceAPIPort <= 0 {
+		return
+	}
+	for serial := range sp.Serials {
+		if _, remote := sp.RemoteDevices[serial]; remote {
+			continue
+		}
+		if err := m.addReverse(serial, m.DeviceAPIPort); err != nil {
+			slog.Warn("device API reverse forward failed; device-side Wi-Fi control unavailable", "serial", serial, "lockId", sp.LockID, "error", err)
+			return
+		}
+	}
+	sp.DeviceAPIPort = m.DeviceAPIPort
+}
+
+// DeviceTokenValid reports whether token is the live device token of lockID.
+func (m *ScopedPortManager) DeviceTokenValid(lockID, token string) bool {
+	m.mu.Lock()
+	sp := m.scopedPorts[lockID]
+	m.mu.Unlock()
+	return sp != nil && token != "" && subtle.ConstantTimeCompare([]byte(sp.DeviceToken), []byte(token)) == 1
 }
 
 var (
@@ -254,7 +300,14 @@ func (m *ScopedPortManager) CreateScopedPort(lockID string, serials map[string]s
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 
+	token := make([]byte, 16)
+	if _, err := rand.Read(token); err != nil {
+		listener.Close()
+		return nil, err
+	}
+
 	sp := &ScopedPort{
+		DeviceToken:   hex.EncodeToString(token),
 		LockID:        lockID,
 		Serials:       serials,
 		Port:          port,

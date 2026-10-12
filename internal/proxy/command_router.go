@@ -256,6 +256,36 @@ func (r *CommandRouter) SetWifi(serial string, state dspb.WifiRequest_State) err
 	return err
 }
 
+// AddReverseForward runs `adb reverse tcp:<port> tcp:<port>` on a local device
+// through its device source: the phone's 127.0.0.1:<port> then reaches
+// <port> on the device source's host. NotFound for a device this proxy has
+// no source for (e.g. a relayed one).
+func (r *CommandRouter) AddReverseForward(serial string, port int) error {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, server := net.Pipe()
+	defer client.Close()
+	client.SetDeadline(time.Now().Add(30 * time.Second))
+	go func() {
+		r.ForwardToDevice(addr, serial, fmt.Sprintf("reverse:forward:tcp:%d;tcp:%d", port, port), server)
+		server.Close()
+	}()
+	reply, err := io.ReadAll(client)
+	if err != nil {
+		return err
+	}
+	// The adb server's OKAY for the stream, then adbd's OKAY for the forward.
+	if !strings.HasPrefix(string(reply), "OKAYOKAY") {
+		return fmt.Errorf("reverse tcp:%d on %s: %q", port, serial, reply)
+	}
+	return nil
+}
+
 // RemoveReverseForwards runs `adb reverse --remove-all` on a local device, so
 // a job that died before its own cleanup leaves no tunnel for the next one.
 // NotFound for a device this proxy has no source for (e.g. a relayed one).

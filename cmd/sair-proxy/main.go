@@ -71,6 +71,7 @@ func main() {
 
 	deviceListTracker := proxy.NewDeviceListTracker(commandRouter)
 	scopedPortManager := proxy.NewScopedPortManager(commandRouter, deviceListTracker, heartbeatInterval)
+	scopedPortManager.DeviceAPIPort = httpAPIPort
 	commandRouter.ResolveSource = deviceListTracker.GetSourceAddr
 
 	// Long-lived stream to the orchestrator: identity, device reports, heartbeats

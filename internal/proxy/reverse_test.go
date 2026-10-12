@@ -60,6 +60,12 @@ func (f *fakeAdbServer) serve(c net.Conn) {
 	}
 }
 
+func (f *fakeAdbServer) has(fw string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.forwards[fw]
+}
+
 func (f *fakeAdbServer) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -138,6 +144,14 @@ func TestAdbReverseThroughScopedPort(t *testing.T) {
 	}
 	if adb.count() != 1 {
 		t.Fatalf("forwards before release = %d, want 1", adb.count())
+	}
+
+	// The proxy's own forward for the device API takes the same path.
+	if err := r.AddReverseForward("SER", 8550); err != nil {
+		t.Fatal(err)
+	}
+	if !adb.has("tcp:8550;tcp:8550") {
+		t.Error("device API forward not installed")
 	}
 
 	m.CloseScopedPort("L1")

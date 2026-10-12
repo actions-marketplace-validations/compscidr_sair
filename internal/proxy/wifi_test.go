@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -111,5 +112,50 @@ func TestScopedPortWifiFansOutPerDevice(t *testing.T) {
 	<-second
 	if want := []string{"ON", "OFF"}; !reflect.DeepEqual(order, want) {
 		t.Errorf("order = %v, want %v", order, want)
+	}
+}
+
+// Acquire mints a device token and reverse-forwards the HTTP API onto each
+// local phone (not the relayed one), so a test on the phone can reach /wifi
+// (sair#83). A phone that refuses the forward leaves the port unset.
+func TestAcquireSetsUpDeviceAPI(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{
+		LockId:        "L1",
+		Serials:       []string{"A", "R"},
+		RemoteDevices: []*pb.DeviceInfo{{Serial: "R"}},
+	}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	m.DeviceAPIPort = 8550
+	var forwards []string
+	m.addReverse = func(serial string, port int) error {
+		forwards = append(forwards, fmt.Sprintf("%s:%d", serial, port))
+		return nil
+	}
+	sp, err := m.Acquire(nil, 0, "", "", 0, false, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sp.DeviceToken) != 32 || sp.DeviceAPIPort != 8550 {
+		t.Errorf("token %q port %d", sp.DeviceToken, sp.DeviceAPIPort)
+	}
+	if want := []string{"A:8550"}; !reflect.DeepEqual(forwards, want) {
+		t.Errorf("forwards = %v, want %v", forwards, want)
+	}
+	if !m.DeviceTokenValid("L1", sp.DeviceToken) || m.DeviceTokenValid("L1", "nope") || m.DeviceTokenValid("L2", sp.DeviceToken) {
+		t.Error("DeviceTokenValid")
+	}
+	m.CloseScopedPort("L1")
+	if m.DeviceTokenValid("L1", sp.DeviceToken) {
+		t.Error("token outlived the lock")
+	}
+
+	m.addReverse = func(string, int) error { return errors.New("cannot bind") }
+	fake.resp.LockId = "L2"
+	sp, err = m.Acquire(nil, 0, "", "", 0, false, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sp.DeviceAPIPort != 0 {
+		t.Errorf("port = %d after a failed forward, want 0", sp.DeviceAPIPort)
 	}
 }

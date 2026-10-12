@@ -182,9 +182,11 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"lock_id": sp.LockID,
-		"serials": serials,
-		"port":    sp.Port,
+		"lock_id":         sp.LockID,
+		"serials":         serials,
+		"port":            sp.Port,
+		"device_token":    sp.DeviceToken,
+		"device_api_port": sp.DeviceAPIPort,
 	})
 }
 
@@ -249,15 +251,25 @@ func parseWifiState(v string, def bool) (on, ok bool) {
 
 // handleWifi turns Wi-Fi on or off on a lock's devices mid-job, using the
 // bench network so the job never needs the credentials.
+//
+// Besides the tenant key, a lock's device token (x-device-token) is accepted
+// here and nowhere else: it is what a test on a locked phone holds (sair#83).
+// It must name the serial, since the proxy cannot tell which phone a
+// reverse-forwarded connection came from.
 func (a *HTTPApi) handleWifi(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAuth(r) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing x-api-key header"})
-		return
-	}
 	q := r.URL.Query()
 	lockID := q.Get("lock_id")
+	byToken := !a.requireAuth(r)
+	if byToken && !a.scopedPortManager.DeviceTokenValid(lockID, r.Header.Get("x-device-token")) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing x-api-key or x-device-token header"})
+		return
+	}
 	if lockID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lock_id parameter required"})
+		return
+	}
+	if byToken && strings.TrimSpace(q.Get("serial")) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "serial parameter required with x-device-token"})
 		return
 	}
 	on, ok := parseWifiState(q.Get("state"), false)
