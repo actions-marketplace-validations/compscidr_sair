@@ -72,13 +72,22 @@ you:
 **Online** means all of: associated to `WIFI_SSID` itself (not a SIM or a
 leftover network answering instead), that Wi-Fi is Android's validated default
 network (the same verdict the app under test gets), and `WIFI_PING_HOST`
-answers, which with the default hostname proves DNS too. **Offline** means
-not associated to any Wi-Fi network and `WIFI_PING_HOST` does not answer. Each
-wait is bounded (`WIFI_CONNECT_TIMEOUT_SECONDS`, `WIFI_DISCONNECT_TIMEOUT_SECONDS`)
-and a timeout says which part failed, e.g. `associated to "Cafe", not "bench"`,
-`connected but not VALIDATED`, or `still associated to "bench"` (usually a
-suggestion leaked by a test app's own uid, which sair leaves alone). Mobile
-data is not managed: a phone with a SIM is never offline by this definition.
+answers, which with the default hostname proves DNS too. A VPN on top of that
+Wi-Fi is fine. **Offline** means not on `WIFI_SSID` and `WIFI_PING_HOST` does
+not answer; another network without an uplink, such as a test's own Wi-Fi
+Direct group, still counts as offline. Each wait is bounded
+(`WIFI_CONNECT_TIMEOUT_SECONDS`, `WIFI_DISCONNECT_TIMEOUT_SECONDS`) and a
+timeout says which part failed, e.g. `associated to "Cafe", not "bench"`,
+`connected but not VALIDATED`, or `still associated to "bench"`. Mobile data
+is not managed: a phone with a SIM is never offline by this definition.
+
+One sharp edge: a suggestion for the bench network registered by a test app's
+own uid is the app's to remove, not sair's. If a job leaves one behind (a
+cancelled run, a dead runner), the phone re-joins the bench Wi-Fi after every
+forget, so `--no-wifi` acquires on that phone fail with `still associated to
+"bench"` until the app is uninstalled. Uninstall the test app in the job's
+`if: always()` cleanup; sair#76 (a baseline package set on release) is the
+bench-side fix.
 
 Suggestions a test app registers under its own uid are not touched; the app
 cleans those up itself. Devices relayed from another proxy are left alone.

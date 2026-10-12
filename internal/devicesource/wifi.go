@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -144,7 +145,7 @@ func (s *Server) checkOnline(ctx context.Context, serial string) error {
 	if err != nil {
 		return fmt.Errorf("dumpsys connectivity: %w", err)
 	}
-	if err := defaultNetworkValidatedWifi(out); err != nil {
+	if err := wifiValidatedNotCellularDefault(out); err != nil {
 		return err
 	}
 	if _, err := s.shell(ctx, serial, "ping -c1 -W2 "+shellQuote(s.wifiPingHost)); err != nil {
@@ -153,11 +154,13 @@ func (s *Server) checkOnline(ctx context.Context, serial string) error {
 	return nil
 }
 
-// checkOffline is the OFF contract (sair#86): not associated to any Wi-Fi
-// network and no route to wifiPingHost. With radioOn it also wants the radio
-// back up, for RESET. A phone still on an SSID after a forget is usually
-// re-joining through a suggestion from some app's own uid, which the error
-// names so it is found from the log rather than from a failing test.
+// checkOffline is the OFF contract (sair#86): not on the bench network and no
+// route to wifiPingHost. Another SSID without an uplink (a test's own Wi-Fi
+// Direct group, say) is offline in every sense a test cares about, and the
+// ping is what catches one that does have Internet. With radioOn it also
+// wants the radio back up, for RESET. A phone still on the bench SSID after
+// a forget is usually re-joining through a suggestion from some app's own
+// uid, which the error names so it is found from the log, not a red test.
 func (s *Server) checkOffline(ctx context.Context, serial string, radioOn bool) error {
 	st, err := s.wifiStatus(ctx, serial)
 	if err != nil {
@@ -166,10 +169,13 @@ func (s *Server) checkOffline(ctx context.Context, serial string, radioOn bool) 
 	switch {
 	case radioOn && !st.enabled:
 		return errors.New("Wi-Fi radio is still off")
-	case st.ssid != "":
+	case st.ssid != "" && st.ssid == s.wifiSSID:
 		return fmt.Errorf("still associated to %q", st.ssid)
 	}
 	if _, err := s.shell(ctx, serial, "ping -c1 -W2 "+shellQuote(s.wifiPingHost)); err == nil {
+		if st.ssid != "" {
+			return fmt.Errorf("still reaches %s over Wi-Fi %q", s.wifiPingHost, st.ssid)
+		}
 		return fmt.Errorf("still reaches %s (mobile data?)", s.wifiPingHost)
 	}
 	return nil
@@ -207,38 +213,49 @@ func parseWifiStatus(out string) wifiStatusInfo {
 	return st
 }
 
-// defaultNetworkValidatedWifi reads `dumpsys connectivity`: the active default
-// network must be the Wi-Fi one and carry VALIDATED, which Android sets only
-// after its own connectivity probe passed.
+// wifiValidatedNotCellularDefault reads `dumpsys connectivity`: the Wi-Fi
+// network must carry VALIDATED, which Android sets only after its own
+// connectivity probe passed, and the active default must not be cellular
+// (a SIM phone that prefers mobile data). A VPN on top is fine: it becomes
+// the default with Wi-Fi underneath, and the app under test may well be
+// the VPN.
 //
 //	Active default network: 100
 //	Current Networks:
 //	  NetworkAgentInfo{ ... network{100} ... nc{[ Transports: WIFI Capabilities: ...&VALIDATED&... ]} ...
-func defaultNetworkValidatedWifi(out string) error {
+func wifiValidatedNotCellularDefault(out string) error {
 	lines := strings.Split(out, "\n")
 	id := ""
+	wifiLine := ""
 	for _, line := range lines {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "Active default network: "); ok {
 			id = strings.TrimSpace(v)
-			break
+		}
+		if wifiLine == "" && slices.Contains(transports(line), "WIFI") {
+			wifiLine = line
 		}
 	}
-	if id == "" || id == "none" {
-		return errors.New("no default network")
+	if wifiLine == "" {
+		return errors.New("no Wi-Fi network in dumpsys connectivity")
+	}
+	if !strings.Contains(wifiLine, "VALIDATED") {
+		return errors.New("connected but not VALIDATED")
 	}
 	for _, line := range lines {
-		if !strings.Contains(line, "network{"+id+"}") || !strings.Contains(line, "Transports:") {
-			continue
+		if id != "" && strings.Contains(line, "network{"+id+"}") && slices.Contains(transports(line), "CELLULAR") {
+			return errors.New("default network is cellular, not Wi-Fi")
 		}
-		switch {
-		case !strings.Contains(line, "Transports: WIFI"):
-			return errors.New("default network is not Wi-Fi")
-		case !strings.Contains(line, "VALIDATED"):
-			return errors.New("connected but not VALIDATED")
-		}
+	}
+	return nil
+}
+
+// transports parses "Transports: WIFI|VPN" out of a NetworkAgentInfo line.
+func transports(line string) []string {
+	_, after, ok := strings.Cut(line, "Transports: ")
+	if !ok {
 		return nil
 	}
-	return fmt.Errorf("default network %s not listed", id)
+	return strings.Split(strings.Fields(after)[0], "|")
 }
 
 // adbShell runs one command line on the device. The command is passed as a

@@ -96,12 +96,13 @@ func TestSetWifiReportsWhyTheContractFailed(t *testing.T) {
 		{"on: radio off", pb.WifiRequest_ON, statusDisabled, connectivityWifi, nil, "Wi-Fi radio is off"},
 		{"on: not associated", pb.WifiRequest_ON, statusNotConnected, connectivityWifi, nil, "not associated to any network"},
 		{"on: wrong network", pb.WifiRequest_ON, strings.Replace(statusConnected, "it's here", "Cafe", 1), connectivityWifi, nil, `associated to "Cafe", not "it's here"`},
-		{"on: no default network", pb.WifiRequest_ON, statusConnected, "Active default network: none\n", nil, "no default network"},
-		{"on: default is cellular", pb.WifiRequest_ON, statusConnected, strings.Replace(connectivityWifi, "Transports: WIFI", "Transports: CELLULAR", 1), nil, "default network is not Wi-Fi"},
+		{"on: no Wi-Fi network", pb.WifiRequest_ON, statusConnected, "Active default network: none\n", nil, "no Wi-Fi network"},
+		{"on: default is cellular", pb.WifiRequest_ON, statusConnected, "Active default network: 101\n" + strings.Replace(connectivityWifi, "Active default network: 100\n", "", 1) + "  NetworkAgentInfo{ ni{[type: MOBILE[]]}  network{101}  nc{[ Transports: CELLULAR Capabilities: INTERNET&VALIDATED ]} }\n", nil, "default network is cellular"},
 		{"on: not validated", pb.WifiRequest_ON, statusConnected, strings.Replace(connectivityWifi, "&VALIDATED", "", 1), nil, "connected but not VALIDATED"},
 		{"on: ping fails", pb.WifiRequest_ON, statusConnected, connectivityWifi, []string{"ping"}, "cannot reach dns.google"},
-		{"off: still associated", pb.WifiRequest_OFF, statusConnected, "", []string{"ping"}, `still associated to "it's here"`},
-		{"off: still has a route", pb.WifiRequest_OFF, statusNotConnected, "", nil, "still reaches dns.google"},
+		{"off: still on the bench network", pb.WifiRequest_OFF, statusConnected, "", []string{"ping"}, `still associated to "it's here"`},
+		{"off: still has a route", pb.WifiRequest_OFF, statusNotConnected, "", nil, "still reaches dns.google (mobile data?)"},
+		{"off: still has a route over another network", pb.WifiRequest_OFF, strings.Replace(statusConnected, "it's here", "Cafe", 2), "", nil, `still reaches dns.google over Wi-Fi "Cafe"`},
 		{"reset: radio stays off", pb.WifiRequest_RESET, statusDisabled, "", []string{"ping"}, "radio is still off"},
 	}
 	for _, tt := range tests {
@@ -113,6 +114,23 @@ func TestSetWifiReportsWhyTheContractFailed(t *testing.T) {
 				t.Fatalf("err = %v, want DeadlineExceeded containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// A VPN on top of the bench Wi-Fi (the app under test may be one) is still
+// online; a Wi-Fi Direct group with no uplink is still offline (sair#88 review).
+func TestSetWifiToleratesVpnAndDirectGroups(t *testing.T) {
+	vpn := "Active default network: 102\nCurrent Networks:\n" +
+		"  NetworkAgentInfo{ ni{[type: VPN[]]}  network{102}  nc{[ Transports: VPN Capabilities: INTERNET&VALIDATED ]} }\n" +
+		"  NetworkAgentInfo{ ni{[type: WIFI[]]}  network{100}  nc{[ Transports: WIFI Capabilities: INTERNET&VALIDATED ]} }\n"
+	s := &Server{wifiSSID: "it's here", wifiPingHost: "dns.google", wifiTimeout: time.Millisecond, wifiOffTimeout: time.Millisecond}
+	fakeShell(s, map[string]string{"cmd wifi status": statusConnected, "dumpsys connectivity": vpn})
+	if _, err := s.SetWifi(context.Background(), &pb.WifiRequest{Serial: "ABC", State: pb.WifiRequest_ON}); err != nil {
+		t.Errorf("ON under a VPN: %v", err)
+	}
+	fakeShell(s, map[string]string{"cmd wifi status": strings.Replace(statusConnected, "it's here", "DIRECT-TEST-ab", 2)}, "ping")
+	if _, err := s.SetWifi(context.Background(), &pb.WifiRequest{Serial: "ABC", State: pb.WifiRequest_OFF}); err != nil {
+		t.Errorf("OFF on a Wi-Fi Direct group without uplink: %v", err)
 	}
 }
 
