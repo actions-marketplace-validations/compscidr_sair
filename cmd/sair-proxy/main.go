@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/compscidr/sair/internal/logging"
 	"github.com/compscidr/sair/internal/proxy"
 	"github.com/compscidr/sair/internal/updater"
 	"github.com/compscidr/sair/internal/version"
@@ -26,12 +27,14 @@ The SAIR ADB proxy. Takes no arguments; it is configured through env vars:
   PROXY_HTTP_HOST             HTTP API bind host (default: 0.0.0.0)
   PROXY_HTTP_PORT             HTTP API port (default: 8550)
   HEARTBEAT_INTERVAL_SECONDS  Lock heartbeat interval (default: 60)
+  SAIR_LOG_LEVEL              debug, info, warn or error (default: info)
   SAIR_AUTO_UPDATE            false disables updating to the latest release on start
   GITHUB_TOKEN                Optional token for the auto-updater's GitHub API calls
 `
 
 func main() {
 	version.HandleArgs(usage)
+	logging.SetLevelFromEnv()
 	updater.CheckAndUpdate("sair-proxy")
 
 	port := envInt("ADB_PROXY_PORT", 5037)

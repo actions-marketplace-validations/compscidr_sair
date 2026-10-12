@@ -131,6 +131,7 @@ modification.
 | `WIFI_PASSPHRASE` | — | WPA2 passphrase (unset = open network) |
 | `WIFI_PING_HOST` | `8.8.8.8` | Pinged to confirm a phone reached the Internet |
 | `WIFI_CONNECT_TIMEOUT_SECONDS` | `60` | How long acquire waits for that ping |
+| `SAIR_LOG_LEVEL` | `info` | `debug` adds per-chunk byte counts for every forward, for tracing a stalled transfer |
 
 Verify it's working:
 
@@ -151,6 +152,7 @@ grpcurl -plaintext localhost:8080 devicesource.DeviceSource/GetDevices
 | `PROXY_HTTP_HOST` | `0.0.0.0` | HTTP API bind address |
 | `HEARTBEAT_INTERVAL_SECONDS` | `60` | Lock heartbeat interval |
 | `PROXY_ID` | hostname | Identifies this proxy within the account so several machines can share one API key. Locks are granted only on devices this proxy reported. |
+| `SAIR_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 
 The proxy exposes two ports:
 

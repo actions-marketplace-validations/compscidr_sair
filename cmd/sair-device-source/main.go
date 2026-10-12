@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/compscidr/sair/internal/devicesource"
+	"github.com/compscidr/sair/internal/logging"
 	"github.com/compscidr/sair/internal/updater"
 	"github.com/compscidr/sair/internal/version"
 	pb "github.com/compscidr/sair/proto/devicesource"
@@ -35,12 +36,14 @@ The SAIR device source. Takes no arguments; it is configured through env vars:
   WIFI_PASSPHRASE               Bench Wi-Fi passphrase; empty for an open network
   WIFI_PING_HOST                Host a phone must ping before it is handed over (default: 8.8.8.8)
   WIFI_CONNECT_TIMEOUT_SECONDS  How long to wait for that (default: 60)
+  SAIR_LOG_LEVEL                debug, info, warn or error (default: info)
   SAIR_AUTO_UPDATE              false disables updating to the latest release on start
   GITHUB_TOKEN                  Optional token for the auto-updater's GitHub API calls
 `
 
 func main() {
 	version.HandleArgs(usage)
+	logging.SetLevelFromEnv()
 	updater.CheckAndUpdate("sair-device-source")
 
 	slog.Info("DeviceSource starting...", "version", version.Version)
