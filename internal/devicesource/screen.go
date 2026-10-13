@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	pb "github.com/compscidr/sair/proto/devicesource"
@@ -73,36 +74,55 @@ func (s *Server) wake(ctx context.Context, serial string) error {
 	return nil
 }
 
-// checkAwake reads the two lines that matter (confirmed on One UI, Android
-// 14 and 16):
+// checkAwake reads the fields that matter:
 //
 //	dumpsys power:          mWakefulness=Awake
-//	dumpsys window policy:  KeyguardServiceDelegate
-//	                          showing=false
+//	dumpsys window policy:  KeyguardServiceDelegate / showing=false   (confirmed on One UI 14 and 16)
+//	                        mShowingLockscreen=false                  (Android 4.x, where wm does not exist)
+//
+// A dump with neither keyguard field is a format this does not know; that
+// is logged once per phone and treated as unlocked, since failing every
+// acquire on a bench over a parser is worse than the pre-#92 behaviour.
 func (s *Server) checkAwake(ctx context.Context, serial string) error {
 	out, err := s.shell(ctx, serial, "dumpsys power")
 	if err != nil {
 		return fmt.Errorf("dumpsys power: %w", err)
 	}
-	if w := dumpsysValue(out, "mWakefulness="); w != "Awake" {
+	if w := dumpsysField(out, "mWakefulness="); w != "Awake" {
 		return fmt.Errorf("screen is %s, not Awake", w)
 	}
 	out, err = s.shell(ctx, serial, "dumpsys window policy")
 	if err != nil {
 		return fmt.Errorf("dumpsys window policy: %w", err)
 	}
-	if v := dumpsysValue(out, "showing="); v != "false" {
+	v := dumpsysField(out, "showing=")
+	if v == "" {
+		v = dumpsysField(out, "mShowingLockscreen=")
+	}
+	switch v {
+	case "false":
+		return nil
+	case "":
+		if _, logged := unknownKeyguardFormat.LoadOrStore(serial, true); !logged {
+			slog.Warn("dumpsys window policy has no keyguard field this version knows; the screen contract cannot be verified on this phone", "serial", serial)
+		}
+		return nil
+	default:
 		return errors.New("keyguard is showing")
 	}
-	return nil
 }
 
-// dumpsysValue returns what follows the first line that starts with prefix
-// (trimmed), or "" when there is none.
-func dumpsysValue(out, prefix string) string {
-	for _, line := range strings.Split(out, "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(line), prefix); ok {
-			return strings.TrimSpace(v)
+// unknownKeyguardFormat holds the serials whose dump format was already
+// warned about, so the warning is not repeated on every acquire.
+var unknownKeyguardFormat sync.Map
+
+// dumpsysField returns the value of the first whitespace-separated
+// "key=value" token whose key is prefix, or "" when there is none. Tokens,
+// not lines: old dumps put several fields on one line.
+func dumpsysField(out, prefix string) string {
+	for _, tok := range strings.Fields(out) {
+		if v, ok := strings.CutPrefix(tok, prefix); ok {
+			return v
 		}
 	}
 	return ""
