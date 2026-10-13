@@ -262,10 +262,16 @@ func transports(line string) []string {
 // from stdin rather than as the adb service string: adbd logs every service
 // it serves to logcat, where a passphrase would sit for the next job to
 // read (sair#100). Exit status and output come back the same (adb's v2
-// shell protocol). Errors carry the output but never the command.
+// shell protocol). The script ends with an explicit exit because a
+// pre-Lollipop adbd never forwards stdin's EOF, so sh would otherwise sit
+// there until the context kills it (seen on Android 4.2.2: every call took
+// the full timeout and the phone was never reported). Such an adbd also
+// runs sh on a pty, so its output carries the echoed script and prompts;
+// the parsers here key on prefixes and tokens and cope. Errors carry the
+// output but never the command.
 func (s *Server) adbShell(ctx context.Context, serial, command string) (string, error) {
 	cmd := exec.CommandContext(ctx, "adb", "-P", strconv.Itoa(s.adbPort), "-s", serial, "shell", "sh")
-	cmd.Stdin = strings.NewReader(command + "\n")
+	cmd.Stdin = strings.NewReader(command + "\nexit\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
