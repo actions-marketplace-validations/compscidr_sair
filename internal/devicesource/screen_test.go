@@ -2,6 +2,7 @@ package devicesource
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -74,11 +75,32 @@ func TestWakeFailsAndWarnsWhenKeyguardStays(t *testing.T) {
 	}
 }
 
-func TestCheckAwakeNamesWhatIsWrong(t *testing.T) {
-	s := &Server{}
-	fakeShell(s, map[string]string{"dumpsys power": powerAsleep, "dumpsys window policy": policyUnlocked})
-	if err := s.checkAwake(context.Background(), "A"); err == nil || !strings.Contains(err.Error(), "Asleep") {
-		t.Errorf("asleep: err = %v", err)
+// Real Android 4.2.2 output (Galaxy SM-G3502, API 17, the silverstone dogfood
+// phone): no KeyguardServiceDelegate block, several fields per line.
+const policyLegacy = "WINDOW MANAGER POLICY STATE (dumpsys window policy)\n    mScreenOnEarly=true mScreenOnFully=true mOrientationSensorEnabled=true\n    mShowingLockscreen=%s mShowingDream=false mDreamingLockscreen=false\n    mKeyguard=Window{42ab1528 u0 Keyguard}\n    mDismissKeyguard=0 mWinDismissingKeyguard=null mHomePressed=false\n"
+
+func TestCheckAwake(t *testing.T) {
+	tests := []struct {
+		name, power, policy, wantErr string
+	}{
+		{"asleep", powerAsleep, policyUnlocked, "Asleep"},
+		{"locked", powerAwake, policyLocked, "keyguard is showing"},
+		{"legacy unlocked", powerAwake, fmt.Sprintf(policyLegacy, "false"), ""},
+		{"legacy locked", powerAwake, fmt.Sprintf(policyLegacy, "true"), "keyguard is showing"},
+		{"unknown format passes", powerAwake, "WINDOW MANAGER POLICY STATE\n    mSystemBooted=true\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Server{}
+			fakeShell(s, map[string]string{"dumpsys power": tt.power, "dumpsys window policy": tt.policy})
+			err := s.checkAwake(context.Background(), "A")
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("err = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ package devicesource
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -90,15 +91,17 @@ func TestRebootIfStaleNeedsTheOldBootID(t *testing.T) {
 }
 
 // A PIN phone boots to "unlock to start", which sair cannot get past, so it
-// is never rebooted by uptime.
+// is never rebooted by uptime; nor is one whose dump cannot say.
 func TestRebootIfStaleLeavesASecureLockedPhoneUp(t *testing.T) {
-	s := &Server{rebootAfter: time.Hour, rebootTimeout: time.Second}
-	cmds := fakeShell(s, map[string]string{"cat /proc/uptime": "90000 1", "dumpsys window policy": policySecure})
-	resp, err := s.RebootIfStale(context.Background(), &pb.RebootRequest{Serial: "A"})
-	if err != nil || resp.Rebooted {
-		t.Fatalf("resp = %v, err = %v; want not rebooted, no error", resp, err)
-	}
-	if countOf(*cmds, "reboot") != 0 {
-		t.Errorf("rebooted a secure-locked phone: %q", *cmds)
+	for name, policy := range map[string]string{"secure": policySecure, "unknown format": fmt.Sprintf(policyLegacy, "false")} {
+		s := &Server{rebootAfter: time.Hour, rebootTimeout: time.Second}
+		cmds := fakeShell(s, map[string]string{"cat /proc/uptime": "90000 1", "dumpsys window policy": policy})
+		resp, err := s.RebootIfStale(context.Background(), &pb.RebootRequest{Serial: "A"})
+		if err != nil || resp.Rebooted {
+			t.Fatalf("%s: resp = %v, err = %v; want not rebooted, no error", name, resp, err)
+		}
+		if countOf(*cmds, "reboot") != 0 {
+			t.Errorf("%s: rebooted: %q", name, *cmds)
+		}
 	}
 }

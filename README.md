@@ -88,7 +88,9 @@ you:
   the phone's screen lock to Swipe or None. The reason is also reported as
   the device's `warning` (proxy `/status`, device report) until a wake
   succeeds. A phone with `stay_on_while_plugged_in` off is logged as a
-  warning, since it will sleep and re-lock between steps.
+  warning, since it will sleep and re-lock between steps. Android 4.x phones
+  (no `wm`) are verified through their own `mShowingLockscreen` field; a dump
+  in a format sair does not know is logged once and treated as unlocked.
 - **Rebooted on release** once its uptime is over `REBOOT_UPTIME_HOURS`
   (24 by default), while the phone is unacquired: the reset waits for the
   boot and the wake above before the next acquire of that phone can proceed,

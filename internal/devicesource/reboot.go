@@ -41,8 +41,13 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "%s: dumpsys window policy: %v", req.Serial, err)
 	}
-	if dumpsysValue(out, "secure=") != "false" {
+	switch dumpsysField(out, "secure=") {
+	case "false":
+	case "true":
 		slog.Warn("uptime reboot skipped: a secure lock is set, and sair could not unlock the phone after a reboot. Set Settings > Lock screen > Screen lock type to Swipe or None", "serial", req.Serial, "uptime", uptime.Round(time.Minute))
+		return resp, nil
+	default:
+		slog.Warn("uptime reboot skipped: cannot tell from dumpsys window policy whether a secure lock is set on this Android version", "serial", req.Serial, "uptime", uptime.Round(time.Minute))
 		return resp, nil
 	}
 	// The old boot_id is the whole proof that the phone went down; without
