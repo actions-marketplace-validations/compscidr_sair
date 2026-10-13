@@ -258,11 +258,15 @@ func transports(line string) []string {
 	return strings.Split(strings.Fields(after)[0], "|")
 }
 
-// adbShell runs one command line on the device. The command is passed as a
-// single argument so the device shell parses it, quoting included. Errors
-// carry the output but never the command, which may hold the passphrase.
+// adbShell runs one command line on the device, through `sh` reading it
+// from stdin rather than as the adb service string: adbd logs every service
+// it serves to logcat, where a passphrase would sit for the next job to
+// read (sair#100). Exit status and output come back the same (adb's v2
+// shell protocol). Errors carry the output but never the command.
 func (s *Server) adbShell(ctx context.Context, serial, command string) (string, error) {
-	out, err := exec.CommandContext(ctx, "adb", "-P", strconv.Itoa(s.adbPort), "-s", serial, "shell", command).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "adb", "-P", strconv.Itoa(s.adbPort), "-s", serial, "shell", "sh")
+	cmd.Stdin = strings.NewReader(command + "\n")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 	}

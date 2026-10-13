@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/compscidr/sair/internal/logging"
 	pb "github.com/compscidr/sair/proto/devicesource"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -293,7 +294,7 @@ func (s *Server) ExecOnDevice(req *pb.DeviceCommand, stream pb.DeviceSource_Exec
 
 	args := []string{"-P", strconv.Itoa(s.adbPort), "-s", req.Serial, "shell"}
 	args = append(args, strings.Fields(req.Command)...)
-	slog.Info("ExecOnDevice", "args", strings.Join(args, " "))
+	slog.Info("ExecOnDevice", "args", logging.RedactSecrets(strings.Join(args, " ")))
 
 	timeout := int(req.TimeoutSeconds)
 	if timeout <= 0 {
@@ -407,7 +408,7 @@ func (s *Server) ForwardToDevice(stream pb.DeviceSource_ForwardToDeviceServer) e
 		return err
 	}
 
-	slog.Info("ForwardToDevice: connecting to ADB server", "serial", setup.Serial, "command", setup.InitialCommand)
+	slog.Info("ForwardToDevice: connecting to ADB server", "serial", setup.Serial, "command", logging.RedactSecrets(setup.InitialCommand))
 
 	// Connect to real ADB server
 	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", s.adbPort))
@@ -434,7 +435,7 @@ func (s *Server) ForwardToDevice(stream pb.DeviceSource_ForwardToDeviceServer) e
 			conn.Close()
 			return status.Errorf(codes.Internal, "failed to send initial command: %v", err)
 		}
-		slog.Debug("ForwardToDevice: initial command sent", "serial", setup.Serial, "command", setup.InitialCommand)
+		slog.Debug("ForwardToDevice: initial command sent", "serial", setup.Serial, "command", logging.RedactSecrets(setup.InitialCommand))
 	}
 
 	// Bidirectional forwarding, watched for stalls (sair#79).
@@ -509,7 +510,7 @@ func (s *Server) ForwardToDevice(stream pb.DeviceSource_ForwardToDeviceServer) e
 	conn.Close()
 
 	if reason := w.stalled(); reason != "" {
-		slog.Warn("ForwardToDevice: stalled forward torn down", "serial", setup.Serial, "command", setup.InitialCommand, "reason", reason)
+		slog.Warn("ForwardToDevice: stalled forward torn down", "serial", setup.Serial, "command", logging.RedactSecrets(setup.InitialCommand), "reason", reason)
 		return status.Error(codes.DeadlineExceeded, reason)
 	}
 	resultErr := firstRealError(err)
