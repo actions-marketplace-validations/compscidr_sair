@@ -143,6 +143,12 @@ The Wi-Fi reset does not touch suggestions a test app registered under its
 own uid; those go when the package reset uninstalls the app. Devices relayed
 from another proxy are left alone.
 
+The passphrase never goes on the adb command line: adbd logs every shell
+service it serves to the phone's logcat, where the next job could read it, so
+the device source feeds its commands to `sh` over stdin. A job that runs
+`cmd wifi add-suggestion` itself through the scoped port has the command
+redacted in the device source log and in the lock log.
+
 ## Architecture
 
 ```

@@ -222,3 +222,14 @@ func TestDrainAllReturnsWhileATunnelKeepsProducing(t *testing.T) {
 	}
 	close(stop)
 }
+
+// A job's own `adb shell cmd wifi add-suggestion …` through the scoped port
+// must not carry the passphrase into the lock log the portal shows (sair#100).
+func TestLockLogRedactsPassphraseInService(t *testing.T) {
+	log := &LockLog{}
+	log.Record(&pb.LockLogEntry{Serial: "A", Service: "shell,v2,raw:cmd wifi add-suggestion 'bench' wpa2 'hunter2'"})
+	got := log.DrainAll()
+	if len(got) != 1 || got[0].Service != "shell,v2,raw:cmd wifi add-suggestion <redacted>" {
+		t.Errorf("service = %q", got)
+	}
+}

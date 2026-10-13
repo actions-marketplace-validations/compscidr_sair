@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/compscidr/sair/internal/logging"
 	pb "github.com/compscidr/sair/proto/orchestrator"
 )
 
@@ -51,12 +52,15 @@ type LockLog struct {
 	open         map[*tunnelObserver]struct{}
 }
 
-// Record appends an entry, truncating the service string and dropping the
-// entry (with a single marker) once the cap is reached.
+// Record appends an entry, redacting a passphrase in the service string
+// (the lock log is shipped to the orchestrator and shown in the portal),
+// truncating it, and dropping the entry (with a single marker) once the cap
+// is reached.
 func (l *LockLog) Record(e *pb.LockLogEntry) {
 	if l == nil || e == nil {
 		return
 	}
+	e.Service = logging.RedactSecrets(e.Service)
 	const ellipsis = "…"
 	if len(e.Service) > maxLockLogServiceLen {
 		// Stay within the byte cap including the marker.
