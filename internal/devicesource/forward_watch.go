@@ -2,6 +2,7 @@ package devicesource
 
 import (
 	"fmt"
+	"github.com/compscidr/sair/internal/logging"
 	"io"
 	"log/slog"
 	"strings"
@@ -28,8 +29,11 @@ type forwardWatch struct {
 	reason          atomic.Pointer[string]
 }
 
+// newForwardWatch keeps the service redacted: it is only ever used in log
+// lines and stall reasons, and a forwarded add-suggestion carries the
+// passphrase (sair#100). isInstallWrite looks at the prefix, which stays.
 func newForwardWatch(serial, service string) *forwardWatch {
-	w := &forwardWatch{serial: serial, service: service}
+	w := &forwardWatch{serial: serial, service: logging.RedactSecrets(service)}
 	w.lastIO.Store(time.Now().UnixNano())
 	return w
 }

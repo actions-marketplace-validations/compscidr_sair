@@ -151,3 +151,15 @@ func TestSilentShellIsLeftAlone(t *testing.T) {
 		t.Errorf("a silent shell was torn down: %v", err)
 	}
 }
+
+// The watch's copy of the service, which every stall reason and idle warning
+// embeds, never holds a passphrase.
+func TestForwardWatchStoresRedactedService(t *testing.T) {
+	w := newForwardWatch("A", "shell,v2,raw:cmd wifi add-suggestion 'bench' wpa2 'hunter2'")
+	if w.service != "shell,v2,raw:cmd wifi add-suggestion <redacted>" {
+		t.Errorf("service = %q", w.service)
+	}
+	if r := stallReason(w.service, time.Now(), 0, time.Now().Add(-time.Hour).UnixNano(), time.Minute); strings.Contains(r, "hunter2") || r == "" {
+		t.Errorf("stall reason = %q", r)
+	}
+}
