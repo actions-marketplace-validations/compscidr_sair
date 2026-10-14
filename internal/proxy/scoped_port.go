@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	dspb "github.com/compscidr/sair/proto/devicesource"
@@ -42,6 +43,10 @@ type ScopedPort struct {
 	// DeviceAPIPort is the port on each local phone that reaches the proxy's
 	// HTTP API (an adb reverse set up on acquire); 0 when none was set up.
 	DeviceAPIPort int
+	// openConns and lastClient (unix nanos of the last client connect or
+	// disconnect) tell whether anyone is still using the lock (sair#106).
+	openConns  atomic.Int32
+	lastClient atomic.Int64
 	// Stable transport ids for RemoteDevices, disjoint from the tracker's ids
 	// (which start at 1). One mutex guards both directions so they can never
 	// disagree: an id is only ever visible together with its reverse entry.
@@ -109,6 +114,11 @@ type ScopedPortManager struct {
 	// device token. 0 disables it. The forward lands on the device source's
 	// host, so the proxy must serve its HTTP API there (they share a bench).
 	DeviceAPIPort int
+	// IdleTimeout releases a lock whose scoped port has had no client
+	// connected for this long: its job is gone (runner lost, container
+	// killed) and would otherwise be kept alive by the heartbeat forever
+	// (sair#106). 0 disables it.
+	IdleTimeout time.Duration
 	// wifiMu holds one *sync.Mutex per serial. It orders Wi-Fi changes on a
 	// device so a released lock's reset can never land after the next lock's
 	// connect, while one phone's ON wait never blocks another phone's OFF.
@@ -133,6 +143,7 @@ func NewScopedPortManager(
 		commandRouter:         commandRouter,
 		deviceListTracker:     deviceListTracker,
 		heartbeatIntervalSecs: heartbeatIntervalSecs,
+		IdleTimeout:           20 * time.Minute,
 		flushInterval:         time.Second,
 		scopedPorts:           make(map[string]*ScopedPort),
 		setWifi:               commandRouter.SetWifi,
@@ -423,6 +434,7 @@ func (m *ScopedPortManager) CreateScopedPort(lockID string, serials map[string]s
 		Log:           &LockLog{},
 		RemoteDevices: remoteDevices,
 	}
+	sp.lastClient.Store(sp.CreatedAt.UnixNano())
 
 	// Start accept loop
 	go m.runAcceptLoop(sp)
@@ -538,8 +550,24 @@ func (m *ScopedPortManager) runAcceptLoop(sp *ScopedPort) {
 		adbConn := NewAdbConnection(conn, m.commandRouter, m.deviceListTracker, sp.Serials, sp.Log, sp.RemoteDevices)
 		adbConn.remoteTransportID = sp.remoteTransportID
 		adbConn.remoteSerialByTransportID = sp.remoteSerialByTransportID
-		go adbConn.Handle()
+		sp.openConns.Add(1)
+		sp.lastClient.Store(time.Now().UnixNano())
+		go func() {
+			defer func() {
+				sp.lastClient.Store(time.Now().UnixNano())
+				sp.openConns.Add(-1)
+			}()
+			adbConn.Handle()
+		}()
 	}
+}
+
+// idleFor is how long sp has had no client connected, 0 while one is.
+func (sp *ScopedPort) idleFor() time.Duration {
+	if sp.openConns.Load() > 0 {
+		return 0
+	}
+	return time.Since(time.Unix(0, sp.lastClient.Load()))
 }
 
 // runKeepalive flushes the ADB log every flushInterval and heartbeats every
@@ -579,6 +607,13 @@ func (m *ScopedPortManager) runKeepalive(sp *ScopedPort) {
 			}
 			flushedSinceBeat = true
 		case <-beat.C:
+			if idle := sp.idleFor(); m.IdleTimeout > 0 && idle >= m.IdleTimeout {
+				slog.Warn("no adb client on the scoped port; releasing the abandoned lock", "lockId", sp.LockID, "port", sp.Port, "idle", idle.Round(time.Second))
+				sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Service: fmt.Sprintf("sair: released, no adb client for %s (the job is gone)", idle.Round(time.Minute))})
+				// Asynchronously, like the expiry below: Release waits on keepaliveDone.
+				go m.Release(sp.LockID, "cancelled")
+				return
+			}
 			if flushedSinceBeat {
 				flushedSinceBeat = false
 				continue

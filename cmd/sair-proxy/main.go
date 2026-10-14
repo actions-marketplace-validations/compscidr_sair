@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/compscidr/sair/internal/logging"
 	"github.com/compscidr/sair/internal/proxy"
@@ -27,6 +28,7 @@ The SAIR ADB proxy. Takes no arguments; it is configured through env vars:
   PROXY_HTTP_HOST             HTTP API bind host (default: 0.0.0.0)
   PROXY_HTTP_PORT             HTTP API port (default: 8550)
   HEARTBEAT_INTERVAL_SECONDS  Lock heartbeat interval (default: 60)
+  LOCK_IDLE_TIMEOUT_MINUTES   Release a lock with no adb client for this long; 0 disables (default: 20)
   SAIR_LOG_LEVEL              debug, info, warn or error (default: info)
   SAIR_AUTO_UPDATE            false disables updating to the latest release on start
   GITHUB_TOKEN                Optional token for the auto-updater's GitHub API calls
@@ -72,6 +74,7 @@ func main() {
 	deviceListTracker := proxy.NewDeviceListTracker(commandRouter)
 	scopedPortManager := proxy.NewScopedPortManager(commandRouter, deviceListTracker, heartbeatInterval)
 	scopedPortManager.DeviceAPIPort = httpAPIPort
+	scopedPortManager.IdleTimeout = time.Duration(envInt64("LOCK_IDLE_TIMEOUT_MINUTES", 20)) * time.Minute
 	commandRouter.ResolveSource = deviceListTracker.GetSourceAddr
 
 	// Long-lived stream to the orchestrator: identity, device reports, heartbeats

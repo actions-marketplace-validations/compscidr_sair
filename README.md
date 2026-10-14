@@ -248,6 +248,7 @@ grpcurl -plaintext localhost:8080 devicesource.DeviceSource/GetDevices
 | `PROXY_HTTP_PORT` | `8550` | HTTP API listen port |
 | `PROXY_HTTP_HOST` | `0.0.0.0` | HTTP API bind address |
 | `HEARTBEAT_INTERVAL_SECONDS` | `60` | Lock heartbeat interval |
+| `LOCK_IDLE_TIMEOUT_MINUTES` | `20` | Release a lock whose scoped port has had no adb client for this long (a job that died holding it); `0` disables |
 | `PROXY_ID` | hostname | Identifies this proxy within the account so several machines can share one API key. Locks are granted only on devices this proxy reported. |
 | `SAIR_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 
