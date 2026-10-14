@@ -422,3 +422,28 @@ func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 		t.Errorf("lock log has no reboot line: %v", fake.lastRelease.GetLog())
 	}
 }
+
+// TestScopedPortReleasesLockWithNoClient guards sair#106: a job killed with
+// its lock held (runner lost) must not have the heartbeat keep the lock alive
+// forever. A connected client, even a silent one, keeps it.
+func TestScopedPortReleasesLockWithNoClient(t *testing.T) {
+	f := newFakeSessionServer()
+	m, _ := newManagerOnSession(t, f, 1)
+	m.IdleTimeout = 1500 * time.Millisecond
+	sp, _ := m.CreateScopedPort("lock-1", map[string]struct{}{}, nil)
+
+	conn, err := net.Dial("tcp", sp.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second)
+	if f.release() != nil {
+		t.Fatal("released while a client was connected")
+	}
+	conn.Close()
+	waitFor(t, "idle release", func() bool { return f.release() != nil })
+	rel := f.release()
+	if rel.LockId != "lock-1" || rel.Status != "cancelled" || len(rel.Log) == 0 || !strings.Contains(rel.Log[len(rel.Log)-1].Service, "no adb client") {
+		t.Errorf("release = %+v", rel)
+	}
+}
