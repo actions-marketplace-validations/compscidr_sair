@@ -616,3 +616,24 @@ func TestServeRelayDoesNotDrainAfterAnError(t *testing.T) {
 		return f.ended[s.TunnelId]
 	})
 }
+
+// A relay_open for a phone whose release reset still holds its serial lock
+// must not reach the device until the reset is done (sair#105).
+func TestServeRelayWaitsForReleaseReset(t *testing.T) {
+	f := newFakeRelayOrchestrator()
+	ds := &fakeDeviceSource{}
+	r := relayRouter(t, f, ds, map[string]string{"LOCAL1": "passthrough:///bufconn-ds"})
+	m := NewScopedPortManager(r, nil, 3600)
+	mu := m.wifiLock("LOCAL1")
+	mu.Lock() // the reset
+	go r.ServeRelay(&pb.RelayOpen{TunnelId: "t1", Serial: "LOCAL1", LockId: "l1"})
+	time.Sleep(200 * time.Millisecond)
+	ds.mu.Lock()
+	n := len(ds.setups)
+	ds.mu.Unlock()
+	if n != 0 {
+		t.Fatal("relay opened the device during its reset")
+	}
+	mu.Unlock()
+	waitFor(t, "device opened after the reset", func() bool { ds.mu.Lock(); defer ds.mu.Unlock(); return len(ds.setups) == 1 })
+}

@@ -197,6 +197,12 @@ func (r *CommandRouter) ServeRelay(open *pb.RelayOpen) {
 		fail("no device " + open.Serial + " on this proxy")
 		return
 	}
+	// A remote holder can be granted a phone whose release reset is still
+	// running here (reboot, Wi-Fi reset, wake); a local acquire waits for it
+	// on the same lock, so the relay does too (sair#105).
+	if r.waitReset != nil {
+		r.waitReset(open.Serial)
+	}
 	client, err := r.getOrCreateDSClient(sourceAddr)
 	if err != nil {
 		fail(err.Error())

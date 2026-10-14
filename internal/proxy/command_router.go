@@ -50,6 +50,9 @@ type CommandRouter struct {
 	// ResolveSource maps a local serial to its device-source address ("" if unknown).
 	// Set by main to the device tracker's GetSourceAddr; exported for that wiring.
 	ResolveSource func(serial string) string
+	// waitReset blocks while a released lock's reset still runs on serial.
+	// Set by NewScopedPortManager, which owns the per-serial lock.
+	waitReset func(serial string)
 
 	// Device-source connections, created lazily when sources register
 	dsMu    sync.Mutex
