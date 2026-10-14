@@ -139,7 +139,7 @@ func NewScopedPortManager(
 	if heartbeatIntervalSecs <= 0 {
 		heartbeatIntervalSecs = 60
 	}
-	return &ScopedPortManager{
+	m := &ScopedPortManager{
 		commandRouter:         commandRouter,
 		deviceListTracker:     deviceListTracker,
 		heartbeatIntervalSecs: heartbeatIntervalSecs,
@@ -153,6 +153,12 @@ func NewScopedPortManager(
 		wake:                  commandRouter.Wake,
 		rebootIfStale:         commandRouter.RebootIfStale,
 	}
+	commandRouter.waitReset = func(serial string) {
+		mu := m.wifiLock(serial)
+		mu.Lock()
+		mu.Unlock()
+	}
+	return m
 }
 
 // Acquire acquires a lock from the orchestrator (via gRPC) and opens a scoped ADB port.
