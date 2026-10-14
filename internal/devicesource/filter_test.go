@@ -54,3 +54,51 @@ func TestFilteredSerialIsRefusedByRPCs(t *testing.T) {
 		t.Errorf("a filtered phone was touched: %q", *cmds)
 	}
 }
+
+// Build props are read in one shell and only once per attachment: a device
+// report that runs adb shells every 5 s is late on a busy host, and a late
+// report gets the source dropped (sair#104). A failed read is retried, and a
+// phone that leaves is read again when it comes back.
+func TestDeviceInfoReadsBuildPropsOncePerAttachment(t *testing.T) {
+	const props = "getprop ro.product.model; getprop ro.product.manufacturer; getprop ro.build.version.release; getprop ro.build.version.sdk"
+	s := &Server{baselineOverride: map[string]struct{}{}}
+	cmds := fakeShell(s, map[string]string{props: "SM-A065M\r\nsamsung\r\n14\r\n34\r\n"}, "dumpsys")
+	countProps := func() int {
+		n := 0
+		for _, c := range *cmds {
+			if c == props {
+				n++
+			}
+		}
+		return n
+	}
+
+	for range 2 {
+		d, err := s.getDeviceInfo("ABC")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Model != "SM-A065M" || d.Manufacturer != "samsung" || d.Release != 14 || d.Sdk != 34 {
+			t.Fatalf("device = %+v", d)
+		}
+	}
+	if n := countProps(); n != 1 {
+		t.Fatalf("props read %d times, want 1: %q", n, *cmds)
+	}
+
+	s.forgetProps([]string{"OTHER"})
+	s.getDeviceInfo("ABC")
+	if n := countProps(); n != 2 {
+		t.Errorf("props not re-read after the phone left: %d reads", n)
+	}
+
+	fakeShell(s, map[string]string{}, "getprop")
+	d, _ := s.getDeviceInfo("NEW")
+	if d.Model != "" {
+		t.Errorf("model from a failed read: %q", d.Model)
+	}
+	cmds = fakeShell(s, map[string]string{props: "Pixel\ngoogle\n15\n35\n"}, "dumpsys")
+	if d, _ := s.getDeviceInfo("NEW"); d.Model != "Pixel" {
+		t.Errorf("failed read was cached: %+v", d)
+	}
+}

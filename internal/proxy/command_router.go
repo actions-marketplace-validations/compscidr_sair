@@ -127,19 +127,6 @@ func (r *CommandRouter) getOrCreateDSClient(sourceAddr string) (dspb.DeviceSourc
 	return client, nil
 }
 
-// RemoveDSClient closes and removes a device-source connection (called when a source goes stale).
-func (r *CommandRouter) RemoveDSClient(sourceAddr string) {
-	r.dsMu.Lock()
-	defer r.dsMu.Unlock()
-
-	if conn, ok := r.dsConns[sourceAddr]; ok {
-		conn.Close()
-		delete(r.dsConns, sourceAddr)
-		delete(r.dsClients, sourceAddr)
-		slog.Info("removed gRPC connection to device-source", "addr", sourceAddr)
-	}
-}
-
 func (r *CommandRouter) ctx() context.Context {
 	md := metadata.Pairs("x-api-key", r.apiKey)
 	return metadata.NewOutgoingContext(context.Background(), md)

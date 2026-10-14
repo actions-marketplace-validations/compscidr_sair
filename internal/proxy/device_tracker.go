@@ -149,20 +149,17 @@ func (t *DeviceListTracker) reapAndReport() {
 	staleThreshold := 30 * time.Second
 	now := time.Now()
 
-	var staleAddrs []string
+	// Only the devices go: the gRPC connection stays, so forwards still in
+	// flight (a streamed install on a host too loaded to report on time,
+	// sair#104) keep running. A source that is really gone fails them itself.
 	t.mu.Lock()
 	for addr, entry := range t.sources {
 		if now.Sub(entry.lastSeen) > staleThreshold {
 			slog.Warn("removing stale device source", "addr", addr)
 			delete(t.sources, addr)
-			staleAddrs = append(staleAddrs, addr)
 		}
 	}
 	t.mu.Unlock()
-
-	for _, addr := range staleAddrs {
-		t.commandRouter.RemoveDSClient(addr)
-	}
 
 	t.rebuild()
 

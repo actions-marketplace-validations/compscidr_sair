@@ -203,3 +203,47 @@ func TestLocalTunnelSendsTheServiceAsInitialCommand(t *testing.T) {
 		t.Errorf("setups = %v", ds.setups)
 	}
 }
+
+// A device source that misses reports (a host swapping hard, sair#104) is
+// dropped from the device list, but a forward it is still carrying (a
+// streamed install) must keep running.
+func TestStaleSourceReapKeepsLiveForward(t *testing.T) {
+	ds := &fakeDeviceSource{}
+	addr, dial := startFakeDeviceSource(t, ds)
+	r := &CommandRouter{dsDialer: dial, orchClient: startFakeOrchestrator(t, &fakeSessionServer{})}
+	tracker := NewDeviceListTracker(r)
+	tracker.UpdateDevices(addr, []*pb.DeviceInfo{{Serial: "SER"}})
+
+	client, server := tcpPair(t)
+	c := NewAdbConnection(server, r, tracker, nil, nil, nil)
+	go c.handleHostCommand("host:transport:SER")
+	client.SetReadDeadline(time.Now().Add(3 * time.Second))
+	echo := func(send string) string {
+		t.Helper()
+		fmt.Fprint(client, send)
+		got := make([]byte, len(send))
+		if _, err := io.ReadFull(client, got); err != nil {
+			t.Fatalf("echo %q: %v", send, err)
+		}
+		return string(got)
+	}
+	okay := make([]byte, 4)
+	io.ReadFull(client, okay)
+	fmt.Fprintf(client, "%04x%s", len("shell:x"), "shell:x")
+	io.ReadFull(client, okay)
+	if got := echo("abc"); got != "ABC" {
+		t.Fatalf("before reap: %q", got)
+	}
+
+	tracker.mu.Lock()
+	tracker.sources[addr] = sourceEntry{devices: tracker.sources[addr].devices, lastSeen: time.Now().Add(-time.Minute)}
+	tracker.mu.Unlock()
+	tracker.reapAndReport()
+	if len(tracker.GetDevices()) != 0 {
+		t.Fatalf("stale source's devices still listed: %v", tracker.GetDevices())
+	}
+
+	if got := echo("def"); got != "DEF" {
+		t.Errorf("after reap: %q", got)
+	}
+}
