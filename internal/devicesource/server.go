@@ -51,6 +51,10 @@ type Server struct {
 	// Forward watchdog (see forwardWatch); 0 means the default.
 	stallTimeout, idleWarnInterval time.Duration
 
+	// Build props per attached serial (see buildProps).
+	propsMu sync.Mutex
+	props   map[string]buildProps
+
 	// Account types per serial, refreshed every accountRefresh (see accountTypes).
 	accountsMu sync.Mutex
 	accounts   map[string]accountsEntry
@@ -227,22 +231,9 @@ func (s *Server) getDeviceInfo(serial string) (*pb.Device, error) {
 		return nil, err
 	}
 
-	getProp := func(prop string) (string, error) {
-		cmd := s.adbCmd("-s", serial, "shell", "getprop", prop)
-		out, err := cmd.Output()
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(string(out)), nil
-	}
-
-	model, _ := getProp("ro.product.model")
-	manufacturer, _ := getProp("ro.product.manufacturer")
-	releaseStr, _ := getProp("ro.build.version.release")
-	sdkStr, _ := getProp("ro.build.version.sdk")
-
-	release, _ := strconv.Atoi(releaseStr)
-	sdk, _ := strconv.Atoi(sdkStr)
+	p := s.buildProps(serial)
+	release, _ := strconv.Atoi(p.release)
+	sdk, _ := strconv.Atoi(p.sdk)
 	s.recordBaseline(serial)
 
 	var lastReboot int64
@@ -251,8 +242,8 @@ func (s *Server) getDeviceInfo(serial string) (*pb.Device, error) {
 	}
 	return &pb.Device{
 		Serial:       serial,
-		Manufacturer: manufacturer,
-		Model:        model,
+		Manufacturer: p.manufacturer,
+		Model:        p.model,
 		Release:      int32(release),
 		Sdk:          int32(sdk),
 		AccountTypes: s.accountTypes(serial),
@@ -261,11 +252,58 @@ func (s *Server) getDeviceInfo(serial string) (*pb.Device, error) {
 	}, nil
 }
 
+type buildProps struct{ model, manufacturer, release, sdk string }
+
+// buildProps reads a phone's build props in one shell, once per attachment:
+// they cannot change while it stays attached, and a device report that runs
+// adb shells every 5 s falls behind on a busy host until the proxy drops the
+// source (sair#104). A failed read is not kept, so the next report retries.
+func (s *Server) buildProps(serial string) buildProps {
+	s.propsMu.Lock()
+	p, ok := s.props[serial]
+	s.propsMu.Unlock()
+	if ok {
+		return p
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := s.shell(ctx, serial, "getprop ro.product.model; getprop ro.product.manufacturer; getprop ro.build.version.release; getprop ro.build.version.sdk")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if err != nil || len(lines) != 4 {
+		slog.Debug("reading build props failed", "serial", serial, "error", err, "output", out)
+		return buildProps{}
+	}
+	for i := range lines {
+		lines[i] = strings.TrimSpace(lines[i])
+	}
+	p = buildProps{lines[0], lines[1], lines[2], lines[3]}
+	s.propsMu.Lock()
+	if s.props == nil {
+		s.props = make(map[string]buildProps)
+	}
+	s.props[serial] = p
+	s.propsMu.Unlock()
+	return p
+}
+
+// forgetProps drops the build props of phones no longer attached, so one
+// that comes back (reflashed, say) is read again.
+func (s *Server) forgetProps(attached []string) {
+	s.propsMu.Lock()
+	defer s.propsMu.Unlock()
+	for serial := range s.props {
+		if !slices.Contains(attached, serial) {
+			delete(s.props, serial)
+		}
+	}
+}
+
 func (s *Server) GetDevices(_ context.Context, _ *emptypb.Empty) (*pb.Devices, error) {
 	serials, err := s.getSerialNumbers()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list devices: %v", err)
 	}
+	s.forgetProps(serials)
 
 	devices := &pb.Devices{}
 	for _, serial := range serials {
