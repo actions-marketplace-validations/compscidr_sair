@@ -5,6 +5,8 @@ After=network.target
 [Service]
 Type=simple
 EnvironmentFile=-/etc/sair/proxy.env
+# A host-exported GODEBUG (UGOS sets the removed tlskyber=0) makes Go fatal at start.
+UnsetEnvironment=GODEBUG
 ExecStart=/usr/local/bin/sair-proxy
 Restart=on-failure
 RestartSec=5

@@ -464,6 +464,12 @@ sudo systemctl status sair-device-source
 sudo journalctl -u sair-proxy -f
 ```
 
+If the proxy or device source restarts in a loop with `fatal error: removed
+GODEBUG ... set to old value`, the host OS is exporting a stale `GODEBUG` into
+every service (UGOS sets `tlskyber=0`). The shipped units clear it with
+`UnsetEnvironment=GODEBUG` (systemd ≥ 235); re-install them or add that line
+in a drop-in (`sudo systemctl edit sair-proxy`).
+
 ### Docker Containers
 
 Pre-built images are published to GitHub Container Registry on each release:
