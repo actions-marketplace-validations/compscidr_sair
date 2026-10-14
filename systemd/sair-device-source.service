@@ -6,6 +6,8 @@ Requires=sair-adb-server.service
 [Service]
 Type=simple
 EnvironmentFile=-/etc/sair/device-source.env
+# A host-exported GODEBUG (UGOS sets the removed tlskyber=0) makes Go fatal at start.
+UnsetEnvironment=GODEBUG
 ExecStart=/usr/local/bin/sair-device-source
 Restart=on-failure
 RestartSec=5
