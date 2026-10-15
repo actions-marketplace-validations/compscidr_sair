@@ -448,7 +448,10 @@ var (
 // the wait when the devices are busy: higher first, FIFO within a value.
 // sameProxy asks for every device from a single proxy. tenantKey, when set,
 // is a guest key the lock is attributed to; empty means the owner's own lock.
-func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, deadlineMinutes int64, repo, runURL string, priority int32, sameProxy bool, tenantKey string) (*LockResult, error) {
+// clientIP, when set, is the caller's address as the proxy sees it; the
+// orchestrator records it as where the key was last used from
+// (sair-orchestrator#705). Older orchestrators ignore it.
+func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, deadlineMinutes int64, repo, runURL string, priority int32, sameProxy bool, tenantKey, clientIP string) (*LockResult, error) {
 	if count < 0 {
 		return nil, fmt.Errorf("count must not be negative: %d", count)
 	}
@@ -460,6 +463,9 @@ func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, de
 	}
 	ctx, cancel := r.ctxWithTimeout(time.Duration(deadlineMinutes) * time.Minute)
 	defer cancel()
+	if clientIP != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-client-ip", clientIP)
+	}
 
 	req := &pb.AcquireLockRequest{Repo: repo, Count: count, RunUrl: runURL, ProxyId: r.proxyID, Priority: priority, SameProxy: sameProxy, TenantApiKey: tenantKey}
 	for s := range serials {
