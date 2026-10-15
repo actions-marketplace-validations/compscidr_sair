@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/compscidr/sair/internal/version"
@@ -33,7 +34,25 @@ type HTTPApi struct {
 	// owner's consent, no portal-side sharing is involved. See README.
 	guestKeys []string
 	server    *http.Server
+
+	// checkKey asks the orchestrator whether a key is on the owner's account
+	// (sair#120); commandRouter.CheckKey, tests swap it. Answers are cached
+	// for keyCacheTTL, misses included, so a bad key is not a round trip per
+	// request. An error (orchestrator down, or one that predates the RPC) is
+	// a refusal and is not cached.
+	checkKey   func(key string) (bool, error)
+	keyCacheMu sync.Mutex
+	keyCache   map[string]keyAnswer
 }
+
+type keyAnswer struct {
+	ok    bool
+	until time.Time
+}
+
+// keyCacheTTL matches the orchestrator's own key refresh, so a key revoked
+// in the portal stops working here within about a minute.
+const keyCacheTTL = 30 * time.Second
 
 func NewHTTPApi(scopedPortManager *ScopedPortManager, deviceListTracker *DeviceListTracker, apiKey string, guestKeys []string, port int, host string) *HTTPApi {
 	api := &HTTPApi{
@@ -41,6 +60,9 @@ func NewHTTPApi(scopedPortManager *ScopedPortManager, deviceListTracker *DeviceL
 		deviceListTracker: deviceListTracker,
 		apiKey:            apiKey,
 		guestKeys:         guestKeys,
+	}
+	if scopedPortManager != nil && scopedPortManager.commandRouter != nil {
+		api.checkKey = scopedPortManager.commandRouter.CheckKey
 	}
 
 	mux := http.NewServeMux()
@@ -82,14 +104,43 @@ func (a *HTTPApi) Stop() {
 	slog.Info("proxy HTTP API stopped")
 }
 
-// requireAuth accepts the owner key or any guest key; anything else is refused.
+// requireAuth accepts the owner key, any listed guest key, and any other key
+// the orchestrator says is on the owner's account; anything else is refused.
 func (a *HTTPApi) requireAuth(r *http.Request) bool {
 	key := r.Header.Get("x-api-key")
-	return key == a.apiKey || slices.Contains(a.guestKeys, key)
+	if key == a.apiKey || slices.Contains(a.guestKeys, key) {
+		return true
+	}
+	if key == "" || a.checkKey == nil {
+		return false
+	}
+
+	a.keyCacheMu.Lock()
+	defer a.keyCacheMu.Unlock()
+	now := time.Now()
+	if c, hit := a.keyCache[key]; hit && now.Before(c.until) {
+		return c.ok
+	}
+	// ponytail: the lock is held across the round trip, so concurrent
+	// requests with unlisted keys serialize behind it; fine at CI rates.
+	ok, err := a.checkKey(key)
+	if err != nil {
+		slog.Warn("could not check api key with the orchestrator", "error", err)
+		return false
+	}
+	if a.keyCache == nil {
+		a.keyCache = make(map[string]keyAnswer)
+	}
+	// ponytail: entries are only evicted on lookup; a flood of distinct bad
+	// keys grows the map until the next hit on each. Sweep if that matters.
+	a.keyCache[key] = keyAnswer{ok: ok, until: now.Add(keyCacheTTL)}
+	return ok
 }
 
 // tenantKey is the key to attribute a lock to: empty for the owner (the
-// orchestrator session already is the owner), the caller's key for a guest.
+// orchestrator session already is the owner), the caller's key otherwise. A
+// guest's key puts the lock under the guest's account; another key on the
+// owner's account resolves to the owner, so it is attributed the same way.
 func (a *HTTPApi) tenantKey(r *http.Request) string {
 	if key := r.Header.Get("x-api-key"); key != a.apiKey {
 		return key

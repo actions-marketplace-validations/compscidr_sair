@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/compscidr/sair/internal/version"
 	dspb "github.com/compscidr/sair/proto/devicesource"
@@ -218,6 +219,55 @@ func TestHTTPApiGuestKeys(t *testing.T) {
 	}
 }
 
+// A key that is neither the owner's nor a listed guest is checked with the
+// orchestrator (sair#120): a key on the owner's account is let in, any other
+// is refused, and both answers are cached so repeats cost no round trip.
+// An orchestrator error (down, or one that predates CheckKey) refuses the
+// request without caching, so a transient outage does not lock a key out.
+func TestHTTPApiAsksOrchestratorAboutUnlistedKeys(t *testing.T) {
+	calls := map[string]int{}
+	answers := map[string]bool{"sibling-key": true}
+	var checkErr error
+	api := &HTTPApi{apiKey: "owner-key", guestKeys: []string{"guest-a"}, checkKey: func(key string) (bool, error) {
+		calls[key]++
+		return answers[key], checkErr
+	}}
+	auth := func(key string) bool {
+		req := httptest.NewRequest("GET", "/status", nil)
+		req.Header.Set("x-api-key", key)
+		return api.requireAuth(req)
+	}
+
+	if !auth("sibling-key") || !auth("sibling-key") {
+		t.Error("a key on the owner's account was refused")
+	}
+	if auth("stranger") || auth("stranger") {
+		t.Error("a key on another account was accepted")
+	}
+	if calls["sibling-key"] != 1 || calls["stranger"] != 1 {
+		t.Errorf("answers not cached: calls = %v", calls)
+	}
+	if auth("owner-key") && auth("guest-a") && auth("") && calls["owner-key"]+calls["guest-a"]+calls[""] != 0 {
+		t.Errorf("listed or empty keys asked the orchestrator: calls = %v", calls)
+	}
+	if auth("") {
+		t.Error("empty key was accepted")
+	}
+
+	checkErr = status.Error(codes.Unimplemented, "unknown method CheckKey")
+	if auth("another") || auth("another") {
+		t.Error("a key was accepted while the orchestrator could not answer")
+	}
+	if calls["another"] != 2 {
+		t.Errorf("an error was cached: calls = %v", calls)
+	}
+	checkErr = nil
+	api.keyCache["sibling-key"] = keyAnswer{ok: true, until: time.Now().Add(-time.Second)}
+	if !auth("sibling-key") || calls["sibling-key"] != 2 {
+		t.Errorf("an expired answer was not asked again: calls = %v", calls)
+	}
+}
+
 // A guest key is forwarded on the lock RPC so the orchestrator can attribute
 // the lock to the guest tenant; the owner's own key is never forwarded, which
 // keeps the request identical to what older proxies send.
@@ -229,12 +279,13 @@ func TestHTTPApiAcquireForwardsGuestKey(t *testing.T) {
 	}{
 		{"owner key sends empty tenant_api_key", "owner-key", ""},
 		{"guest key is forwarded", "guest-a", "guest-a"},
+		{"another key on the owner's account is forwarded", "sibling-key", "sibling-key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := &fakeOrchClient{err: status.Error(codes.ResourceExhausted, "busy")}
 			router := &CommandRouter{orchClient: fake, apiKey: "owner-key"}
-			api := &HTTPApi{apiKey: "owner-key", guestKeys: []string{"guest-a"}, scopedPortManager: NewScopedPortManager(router, nil, 0)}
+			api := &HTTPApi{apiKey: "owner-key", guestKeys: []string{"guest-a"}, scopedPortManager: NewScopedPortManager(router, nil, 0), checkKey: router.CheckKey}
 
 			req := httptest.NewRequest("POST", "/acquire", nil)
 			req.Header.Set("x-api-key", tt.key)

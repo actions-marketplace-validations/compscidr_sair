@@ -503,6 +503,19 @@ func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, de
 	return &LockResult{LockID: resp.LockId, Serials: resultSerials, RemoteDevices: remote}, nil
 }
 
+// CheckKey asks the orchestrator whether key belongs to this proxy's own
+// account (sair#120). Unimplemented from an orchestrator that predates it
+// is returned as is, so the caller can fall back to its local lists.
+func (r *CommandRouter) CheckKey(key string) (bool, error) {
+	ctx, cancel := r.ctxWithTimeout(10 * time.Second)
+	defer cancel()
+	resp, err := r.orchClient.CheckKey(ctx, &pb.CheckKeyRequest{ApiKey: key})
+	if err != nil {
+		return false, err
+	}
+	return resp.SameTenant, nil
+}
+
 // ReleaseLock releases a lock, reporting the job outcome so the orchestrator
 // can record it: success, failure or cancelled from the client ("" when it did
 // not say), or error/cancelled when the proxy releases on its own behalf.

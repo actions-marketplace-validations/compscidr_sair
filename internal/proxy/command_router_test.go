@@ -24,6 +24,22 @@ type fakeOrchClient struct {
 	acquires    int
 }
 
+// CheckKey answers true for "sibling-key" only, as an orchestrator would for
+// a second key on the proxy's own account.
+func (f *fakeOrchClient) CheckKey(ctx context.Context, in *pb.CheckKeyRequest, opts ...grpc.CallOption) (*pb.CheckKeyResponse, error) {
+	return &pb.CheckKeyResponse{SameTenant: in.ApiKey == "sibling-key"}, nil
+}
+
+func TestCheckKeyAsksTheOrchestrator(t *testing.T) {
+	router := &CommandRouter{orchClient: &fakeOrchClient{}, apiKey: "test-key"}
+	if ok, err := router.CheckKey("sibling-key"); !ok || err != nil {
+		t.Errorf("sibling-key: got (%v, %v), want (true, nil)", ok, err)
+	}
+	if ok, err := router.CheckKey("stranger"); ok || err != nil {
+		t.Errorf("stranger: got (%v, %v), want (false, nil)", ok, err)
+	}
+}
+
 func (f *fakeOrchClient) ReleaseLock(ctx context.Context, in *pb.ReleaseLockRequest, opts ...grpc.CallOption) (*pb.ReleaseLockResponse, error) {
 	f.lastRelease = in
 	return &pb.ReleaseLockResponse{Released: true}, nil

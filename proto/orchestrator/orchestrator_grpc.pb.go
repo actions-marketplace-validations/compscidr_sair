@@ -24,6 +24,7 @@ const (
 	Orchestrator_ReleaseLock_FullMethodName   = "/orchestrator.Orchestrator/ReleaseLock"
 	Orchestrator_LockHeartbeat_FullMethodName = "/orchestrator.Orchestrator/LockHeartbeat"
 	Orchestrator_ReportDevices_FullMethodName = "/orchestrator.Orchestrator/ReportDevices"
+	Orchestrator_CheckKey_FullMethodName      = "/orchestrator.Orchestrator/CheckKey"
 	Orchestrator_Session_FullMethodName       = "/orchestrator.Orchestrator/Session"
 	Orchestrator_Tunnel_FullMethodName        = "/orchestrator.Orchestrator/Tunnel"
 )
@@ -37,6 +38,11 @@ type OrchestratorClient interface {
 	ReleaseLock(ctx context.Context, in *ReleaseLockRequest, opts ...grpc.CallOption) (*ReleaseLockResponse, error)
 	LockHeartbeat(ctx context.Context, in *LockHeartbeatRequest, opts ...grpc.CallOption) (*LockHeartbeatResponse, error)
 	ReportDevices(ctx context.Context, in *ReportDevicesRequest, opts ...grpc.CallOption) (*ReportDevicesResponse, error)
+	// Whether an API key belongs to the calling proxy's own account (sair#120),
+	// so a proxy can accept every key on its owner's account without listing
+	// each one as a guest key. Keys of other accounts, listed as guests or not,
+	// and unknown keys both answer false; the proxy never learns which.
+	CheckKey(ctx context.Context, in *CheckKeyRequest, opts ...grpc.CallOption) (*CheckKeyResponse, error)
 	// One long-lived stream per proxy: version and identity first, then device
 	// reports, lock heartbeats, lock log entries and bench events; the orchestrator pushes
 	// lock expiry back. Replaces the periodic unary calls for proxies that use it.
@@ -105,6 +111,16 @@ func (c *orchestratorClient) ReportDevices(ctx context.Context, in *ReportDevice
 	return out, nil
 }
 
+func (c *orchestratorClient) CheckKey(ctx context.Context, in *CheckKeyRequest, opts ...grpc.CallOption) (*CheckKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckKeyResponse)
+	err := c.cc.Invoke(ctx, Orchestrator_CheckKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orchestratorClient) Session(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ProxyMessage, OrchestratorMessage], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Orchestrator_ServiceDesc.Streams[0], Orchestrator_Session_FullMethodName, cOpts...)
@@ -140,6 +156,11 @@ type OrchestratorServer interface {
 	ReleaseLock(context.Context, *ReleaseLockRequest) (*ReleaseLockResponse, error)
 	LockHeartbeat(context.Context, *LockHeartbeatRequest) (*LockHeartbeatResponse, error)
 	ReportDevices(context.Context, *ReportDevicesRequest) (*ReportDevicesResponse, error)
+	// Whether an API key belongs to the calling proxy's own account (sair#120),
+	// so a proxy can accept every key on its owner's account without listing
+	// each one as a guest key. Keys of other accounts, listed as guests or not,
+	// and unknown keys both answer false; the proxy never learns which.
+	CheckKey(context.Context, *CheckKeyRequest) (*CheckKeyResponse, error)
 	// One long-lived stream per proxy: version and identity first, then device
 	// reports, lock heartbeats, lock log entries and bench events; the orchestrator pushes
 	// lock expiry back. Replaces the periodic unary calls for proxies that use it.
@@ -172,6 +193,9 @@ func (UnimplementedOrchestratorServer) LockHeartbeat(context.Context, *LockHeart
 }
 func (UnimplementedOrchestratorServer) ReportDevices(context.Context, *ReportDevicesRequest) (*ReportDevicesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportDevices not implemented")
+}
+func (UnimplementedOrchestratorServer) CheckKey(context.Context, *CheckKeyRequest) (*CheckKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckKey not implemented")
 }
 func (UnimplementedOrchestratorServer) Session(grpc.BidiStreamingServer[ProxyMessage, OrchestratorMessage]) error {
 	return status.Error(codes.Unimplemented, "method Session not implemented")
@@ -290,6 +314,24 @@ func _Orchestrator_ReportDevices_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Orchestrator_CheckKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServer).CheckKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Orchestrator_CheckKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServer).CheckKey(ctx, req.(*CheckKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Orchestrator_Session_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(OrchestratorServer).Session(&grpc.GenericServerStream[ProxyMessage, OrchestratorMessage]{ServerStream: stream})
 }
@@ -330,6 +372,10 @@ var Orchestrator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportDevices",
 			Handler:    _Orchestrator_ReportDevices_Handler,
+		},
+		{
+			MethodName: "CheckKey",
+			Handler:    _Orchestrator_CheckKey_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
