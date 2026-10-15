@@ -39,6 +39,9 @@ jobs:
       - name: Test
         run: go test -v -race ./...
 
+      - name: Validate the MCP bundle manifest
+        run: npx -y @anthropic-ai/mcpb@2.1.2 validate mcpb/manifest.json
+
   docker-build:
     runs-on: ubuntu-latest
     env:

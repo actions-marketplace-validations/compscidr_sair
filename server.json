@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.compscidr/sair",
+  "title": "SAIR",
+  "description": "Run Android tests on real phones, or lease one: install, shell, screenshot, logcat.",
+  "websiteUrl": "https://sair.run",
+  "repository": { "url": "https://github.com/compscidr/sair", "source": "github" },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/compscidr/sair/releases/download/v0.0.0/sair-mcp.mcpb",
+      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        { "name": "SAIR_API_KEY", "description": "An API key from https://sair.run/dashboard", "isRequired": true, "isSecret": true },
+        { "name": "SAIR_API_URL", "description": "Agent API base URL (default: https://api.sair.run)" }
+      ]
+    }
+  ]
+}

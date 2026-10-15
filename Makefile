@@ -18,6 +18,7 @@ VERSION ?= dev
 build:
 	go build -ldflags="-X github.com/compscidr/sair/internal/version.Version=$(VERSION)" ./cmd/sair-device-source
 	go build -ldflags="-X github.com/compscidr/sair/internal/version.Version=$(VERSION)" ./cmd/sair-proxy
+	go build -ldflags="-X github.com/compscidr/sair/internal/version.Version=$(VERSION)" ./cmd/sair-mcp
 
 clean:
-	rm -f sair-device-source sair-proxy
+	rm -f sair-device-source sair-proxy sair-mcp

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Starts the bundled sair-mcp binary for this OS and CPU.
+dir=$(dirname "$0")
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64) b=linux-amd64 ;;
+  Linux-aarch64 | Linux-arm64) b=linux-arm64 ;;
+  Darwin-x86_64) b=darwin-amd64 ;;
+  Darwin-arm64) b=darwin-arm64 ;;
+  *) echo "sair-mcp: no build for $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+esac
+exec "$dir/bin/sair-mcp-$b" "$@"

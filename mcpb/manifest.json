@@ -1,0 +1,40 @@
+{
+  "manifest_version": "0.3",
+  "name": "sair",
+  "display_name": "SAIR",
+  "version": "0.0.0",
+  "description": "Run Android instrumented tests on real phones, or lease one: install APKs, run shell commands, take screenshots, read logcat.",
+  "author": { "name": "Jason Ernst", "url": "https://github.com/compscidr" },
+  "repository": { "type": "git", "url": "https://github.com/compscidr/sair" },
+  "homepage": "https://sair.run",
+  "license": "Apache-2.0",
+  "keywords": ["android", "testing", "devices", "adb", "instrumentation"],
+  "server": {
+    "type": "binary",
+    "entry_point": "sair-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/sair-mcp",
+      "args": [],
+      "env": { "SAIR_API_KEY": "${user_config.api_key}" }
+    }
+  },
+  "user_config": {
+    "api_key": {
+      "type": "string",
+      "title": "SAIR API key",
+      "description": "An API key from https://sair.run/dashboard",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "compatibility": { "platforms": ["darwin", "linux"] },
+  "tools": [
+    { "name": "run_tests", "description": "Run an app's instrumented tests on a real phone and return per-test results" },
+    { "name": "lease_device", "description": "Take a real phone for several calls" },
+    { "name": "install_apk", "description": "Install an APK on the leased phone" },
+    { "name": "shell", "description": "Run a shell command on the leased phone" },
+    { "name": "screenshot", "description": "Take a screenshot of the leased phone" },
+    { "name": "logcat", "description": "Read recent logcat lines from the leased phone" },
+    { "name": "release_device", "description": "End a lease: uninstall what it installed and free the phone" }
+  ]
+}

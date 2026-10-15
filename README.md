@@ -55,6 +55,53 @@ steps:
 The [full workflow example](#example-github-actions-workflow) explains each
 step.
 
+## AI agents (MCP)
+
+`sair-mcp` is an MCP server (stdio) for coding agents. It can run an app's
+instrumented tests on a real phone in one call, or lease a phone and install
+APKs, run shell commands, take screenshots and read logcat on it. It talks to
+the orchestrator's agent API with an API key from [sair.run](https://sair.run).
+The agent's machine needs no proxy or adb.
+
+Install it with `go install github.com/compscidr/sair/cmd/sair-mcp@latest`,
+take `sair-mcp` from a release tarball, or use `sair-mcp.mcpb` from a release
+(an [MCP Bundle](https://github.com/modelcontextprotocol/mcpb) for clients
+such as Claude Desktop). Then add it to your agent, e.g. Claude Code:
+
+```bash
+claude mcp add sair -e SAIR_API_KEY=sair_... -- sair-mcp
+```
+
+or any client's JSON config:
+
+```json
+{ "mcpServers": { "sair": { "command": "sair-mcp", "env": { "SAIR_API_KEY": "sair_..." } } } }
+```
+
+| Tool | Does |
+|------|------|
+| `run_tests` | Uploads `app_apk` and `test_apk` (paths on the agent's machine), waits for the run, returns per-test results, instrument output and a logcat tail |
+| `lease_device` | Takes a phone (`serial`, `wait_s` optional) and returns the lease id |
+| `install_apk` | Installs an APK on the leased phone, returns its package |
+| `shell` | Runs a command, returns output and exit code |
+| `screenshot` | Returns a PNG of the screen |
+| `logcat` | Returns the most recent `lines` (default 500) |
+| `release_device` | Ends the lease: uninstalls what it installed and frees the phone |
+
+The server heartbeats the leases it takes, so an agent that thinks for a while
+between calls keeps its phone. A lease still ends at the plan's maximum
+(free 15 min, solo 1 h, team 2 h, enterprise 4 h). On a phone shared by another
+user, shell commands are limited to a safe set (see the orchestrator README).
+`SAIR_API_URL` points it at another orchestrator (default
+`https://api.sair.run`).
+
+It is listed in the [official MCP registry](https://registry.modelcontextprotocol.io)
+as `io.github.compscidr/sair`. Every release publishes it: the release
+workflow builds `sair-mcp.mcpb`, fills `server.json`'s version, download URL
+and SHA-256 (the values in the repo are placeholders), and publishes it with
+`mcp-publisher`, logged in through GitHub OIDC. Check it with
+`curl "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.compscidr/sair"`.
+
 ## Quick Start
 
 ### Install
