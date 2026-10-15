@@ -280,6 +280,29 @@ func TestHTTPApiDeviceReportCarriesAccountTypes(t *testing.T) {
 	}
 }
 
+// The device source's devicesource.WifiStats decodes straight into the
+// orchestrator's copy of the message (sair#96): every field must survive.
+func TestHTTPApiDeviceReportCarriesWifiStats(t *testing.T) {
+	tracker := newTestTracker()
+	api := &HTTPApi{apiKey: "test-key", deviceListTracker: tracker}
+	sent := &dspb.WifiStats{Joins: 41, Failures: 3, FailuresByReason: map[string]int32{"not_associated": 3}, LastFailure: "why",
+		LastFailureMs: 1, LastJoinMs: 2, MedianJoinMs: 3, SlowestJoinMs: 4, TimeoutMs: 5, Hint: "move it"}
+	body, _ := json.Marshal(map[string]any{"source_addr": "src", "devices": []any{map[string]any{"serial": "SER", "wifi": sent}}})
+	req := httptest.NewRequest("POST", "/internal/devices", strings.NewReader(string(body)))
+	req.Header.Set("x-api-key", "test-key")
+	api.handleRegisterDevices(httptest.NewRecorder(), req)
+
+	devices := tracker.GetDevices()
+	if len(devices) != 1 || devices[0].Wifi == nil {
+		t.Fatalf("devices = %v", devices)
+	}
+	got, _ := json.Marshal(devices[0].Wifi)
+	want, _ := json.Marshal(sent)
+	if string(got) != string(want) {
+		t.Errorf("wifi = %s, want %s", got, want)
+	}
+}
+
 // A lock's device token works on /wifi only, only for that lock, only with a
 // serial, and only while the lock lives (sair#83).
 func TestHTTPApiWifiDeviceToken(t *testing.T) {

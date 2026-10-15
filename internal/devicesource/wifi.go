@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -99,9 +100,124 @@ func (s *Server) wifiConnect(ctx context.Context, serial string) error {
 	if _, err := s.shell(ctx, serial, "cmd wifi start-scan"); err != nil {
 		return fmt.Errorf("start scan: %w", err)
 	}
-	return s.waitFor(ctx, s.wifiTimeout, fmt.Sprintf("%s not online on Wi-Fi %q", serial, s.wifiSSID), func() error {
-		return s.checkOnline(ctx, serial)
+	start := time.Now()
+	var last error
+	err := s.waitFor(ctx, s.wifiTimeout, fmt.Sprintf("%s not online on Wi-Fi %q", serial, s.wifiSSID), func() error {
+		last = s.checkOnline(ctx, serial)
+		return last
 	})
+	if ctx.Err() == nil { // a cancelled job says nothing about the phone
+		s.recordJoin(serial, time.Since(start), err, last)
+	}
+	return err
+}
+
+// wifiStats is one phone's Wi-Fi ON outcomes since the device source started
+// (sair#96), reported as Device.wifi.
+type wifiStats struct {
+	joins, failures int32
+	byReason        map[string]int32
+	lastFailure     string
+	lastFailureAt   time.Time
+	recent          []time.Duration // time to online of the latest 100 successes, oldest first
+	slowest         time.Duration
+	warned          bool // over the failure rate and already logged
+}
+
+// recordJoin counts one ON attempt; err is its outcome and last the final
+// reason checkOnline gave. A phone that fails one join in ten (after five)
+// is logged once, then again only after it has dropped below and come back.
+func (s *Server) recordJoin(serial string, took time.Duration, err, last error) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if s.wifi == nil {
+		s.wifi = make(map[string]*wifiStats)
+	}
+	st := s.wifi[serial]
+	if st == nil {
+		st = &wifiStats{byReason: make(map[string]int32)}
+		s.wifi[serial] = st
+	}
+	st.joins++
+	if err == nil {
+		st.recent = append(st.recent, took)
+		if len(st.recent) > 100 {
+			st.recent = st.recent[1:]
+		}
+		st.slowest = max(st.slowest, took)
+	} else {
+		st.failures++
+		st.byReason[joinFailureReason(last)]++
+		st.lastFailure = status.Convert(err).Message()
+		st.lastFailureAt = time.Now()
+	}
+	bad := st.joins >= 5 && st.failures*10 >= st.joins
+	if bad && !st.warned {
+		slog.Warn("phone often fails to get online on the bench Wi-Fi", "serial", serial, "failures", st.failures, "joins", st.joins, "byReason", st.byReason, "hint", st.hint(s.wifiTimeout))
+	}
+	st.warned = bad
+}
+
+// hint is what a bench owner could do about a phone's joins: raise the
+// timeout when successes come close to it, move the phone when most failures
+// never associated (signal). "" when neither stands out.
+func (st *wifiStats) hint(timeout time.Duration) string {
+	switch {
+	case st.slowest > timeout*3/4:
+		return fmt.Sprintf("slowest join took %s of the %s limit: raise WIFI_CONNECT_TIMEOUT_SECONDS", st.slowest.Round(time.Second), timeout)
+	case st.byReason["not_associated"]*2 > st.failures:
+		return "most failed joins never associated: weak signal where the phone sits? Move it or the AP"
+	}
+	return ""
+}
+
+// wifiStatsReport is the phone's Device.wifi, nil before its first ON.
+func (s *Server) wifiStatsReport(serial string) *pb.WifiStats {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	st := s.wifi[serial]
+	if st == nil {
+		return nil
+	}
+	r := &pb.WifiStats{
+		Joins:            st.joins,
+		Failures:         st.failures,
+		FailuresByReason: maps.Clone(st.byReason),
+		LastFailure:      st.lastFailure,
+		SlowestJoinMs:    st.slowest.Milliseconds(),
+		TimeoutMs:        s.wifiTimeout.Milliseconds(),
+		Hint:             st.hint(s.wifiTimeout),
+	}
+	if !st.lastFailureAt.IsZero() {
+		r.LastFailureMs = st.lastFailureAt.UnixMilli()
+	}
+	if n := len(st.recent); n > 0 {
+		r.LastJoinMs = st.recent[n-1].Milliseconds()
+		r.MedianJoinMs = slices.Sorted(slices.Values(st.recent))[n/2].Milliseconds()
+	}
+	return r
+}
+
+// Why a phone is not online, as WifiStats.failures_by_reason counts them.
+var (
+	errNotAssociated = errors.New("not associated to any network")
+	errOtherSSID     = errors.New("associated to")
+	errNotValidated  = errors.New("connected but not VALIDATED")
+	errNoRoute       = errors.New("cannot reach")
+)
+
+func joinFailureReason(err error) string {
+	switch {
+	case errors.Is(err, errNotAssociated):
+		return "not_associated"
+	case errors.Is(err, errOtherSSID):
+		return "other_ssid"
+	case errors.Is(err, errNotValidated):
+		return "not_validated"
+	case errors.Is(err, errNoRoute):
+		return "no_route"
+	}
+	return "other"
 }
 
 // waitFor polls check every two seconds until it passes, or returns
@@ -137,9 +253,9 @@ func (s *Server) checkOnline(ctx context.Context, serial string) error {
 	case !st.enabled:
 		return errors.New("Wi-Fi radio is off")
 	case st.ssid == "":
-		return errors.New("not associated to any network")
+		return errNotAssociated
 	case st.ssid != s.wifiSSID:
-		return fmt.Errorf("associated to %q, not %q", st.ssid, s.wifiSSID)
+		return fmt.Errorf("%w %q, not %q", errOtherSSID, st.ssid, s.wifiSSID)
 	}
 	out, err := s.shell(ctx, serial, "dumpsys connectivity")
 	if err != nil {
@@ -149,7 +265,7 @@ func (s *Server) checkOnline(ctx context.Context, serial string) error {
 		return err
 	}
 	if _, err := s.shell(ctx, serial, "ping -c1 -W2 "+shellQuote(s.wifiPingHost)); err != nil {
-		return fmt.Errorf("cannot reach %s (DNS or route)", s.wifiPingHost)
+		return fmt.Errorf("%w %s (DNS or route)", errNoRoute, s.wifiPingHost)
 	}
 	return nil
 }
@@ -239,7 +355,7 @@ func wifiValidatedNotCellularDefault(out string) error {
 		return errors.New("no Wi-Fi network in dumpsys connectivity")
 	}
 	if !strings.Contains(wifiLine, "VALIDATED") {
-		return errors.New("connected but not VALIDATED")
+		return errNotValidated
 	}
 	for _, line := range lines {
 		if id != "" && strings.Contains(line, "network{"+id+"}") && slices.Contains(transports(line), "CELLULAR") {

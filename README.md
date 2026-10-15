@@ -182,6 +182,14 @@ timeout says which part failed, e.g. `associated to "Cafe", not "bench"`,
 `connected but not VALIDATED`, or `still associated to "bench"`. Mobile data
 is not managed: a phone with a SIM is never offline by this definition.
 
+The device source counts each phone's Wi-Fi on attempts since it started:
+failures by reason (`not_associated`, `other_ssid`, `not_validated`,
+`no_route`, `other`), the last failure, and the latest, median and slowest
+time to online. The proxy's `/status` lists them per phone as `wifi`, with a
+`hint` when the slowest join comes near `WIFI_CONNECT_TIMEOUT_SECONDS` (raise
+it) or most failures never associated (move the phone or the AP). A phone that
+fails one join in ten, after at least five, is also logged as a warning.
+
 A suggestion for the bench network registered by a test app's own uid is not
 sair's to remove, but the app is: the package reset on release uninstalls it,
 and Android drops its suggestions with it. Only a package in the baseline (a

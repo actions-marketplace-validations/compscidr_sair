@@ -426,7 +426,9 @@ type Device struct {
 	LastRebootMs int64 `protobuf:"varint,7,opt,name=last_reboot_ms,json=lastRebootMs,proto3" json:"last_reboot_ms,omitempty"`
 	// Why the device is not ready for a job, for a bench owner to act on:
 	// currently a keyguard sair could not dismiss. Empty when fine.
-	Warning       string `protobuf:"bytes,8,opt,name=warning,proto3" json:"warning,omitempty"`
+	Warning string `protobuf:"bytes,8,opt,name=warning,proto3" json:"warning,omitempty"`
+	// Wi-Fi join outcomes; unset before the first ON.
+	Wifi          *WifiStats `protobuf:"bytes,9,opt,name=wifi,proto3" json:"wifi,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -517,6 +519,139 @@ func (x *Device) GetWarning() string {
 	return ""
 }
 
+func (x *Device) GetWifi() *WifiStats {
+	if x != nil {
+		return x.Wifi
+	}
+	return nil
+}
+
+// How often a phone met the Wi-Fi ON contract (sair#96), since the device
+// source started, so a bench owner sees a marginal phone as one number
+// rather than a series of red jobs.
+type WifiStats struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// ON attempts, and how many did not get online.
+	Joins    int32 `protobuf:"varint,1,opt,name=joins,proto3" json:"joins,omitempty"`
+	Failures int32 `protobuf:"varint,2,opt,name=failures,proto3" json:"failures,omitempty"`
+	// Failures by the last reason the phone was not online: not_associated,
+	// other_ssid, not_validated, no_route, other.
+	FailuresByReason map[string]int32 `protobuf:"bytes,3,rep,name=failures_by_reason,json=failuresByReason,proto3" json:"failures_by_reason,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	// The latest failure's message and when it happened, unix ms.
+	LastFailure   string `protobuf:"bytes,4,opt,name=last_failure,json=lastFailure,proto3" json:"last_failure,omitempty"`
+	LastFailureMs int64  `protobuf:"varint,5,opt,name=last_failure_ms,json=lastFailureMs,proto3" json:"last_failure_ms,omitempty"`
+	// Time to online of successful joins: the latest, the median of the
+	// latest 100, and the slowest; and the limit (WIFI_CONNECT_TIMEOUT_SECONDS).
+	LastJoinMs    int64 `protobuf:"varint,6,opt,name=last_join_ms,json=lastJoinMs,proto3" json:"last_join_ms,omitempty"`
+	MedianJoinMs  int64 `protobuf:"varint,7,opt,name=median_join_ms,json=medianJoinMs,proto3" json:"median_join_ms,omitempty"`
+	SlowestJoinMs int64 `protobuf:"varint,8,opt,name=slowest_join_ms,json=slowestJoinMs,proto3" json:"slowest_join_ms,omitempty"`
+	TimeoutMs     int64 `protobuf:"varint,9,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	// What a bench owner could do about it, empty when nothing stands out.
+	Hint          string `protobuf:"bytes,10,opt,name=hint,proto3" json:"hint,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WifiStats) Reset() {
+	*x = WifiStats{}
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WifiStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WifiStats) ProtoMessage() {}
+
+func (x *WifiStats) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WifiStats.ProtoReflect.Descriptor instead.
+func (*WifiStats) Descriptor() ([]byte, []int) {
+	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *WifiStats) GetJoins() int32 {
+	if x != nil {
+		return x.Joins
+	}
+	return 0
+}
+
+func (x *WifiStats) GetFailures() int32 {
+	if x != nil {
+		return x.Failures
+	}
+	return 0
+}
+
+func (x *WifiStats) GetFailuresByReason() map[string]int32 {
+	if x != nil {
+		return x.FailuresByReason
+	}
+	return nil
+}
+
+func (x *WifiStats) GetLastFailure() string {
+	if x != nil {
+		return x.LastFailure
+	}
+	return ""
+}
+
+func (x *WifiStats) GetLastFailureMs() int64 {
+	if x != nil {
+		return x.LastFailureMs
+	}
+	return 0
+}
+
+func (x *WifiStats) GetLastJoinMs() int64 {
+	if x != nil {
+		return x.LastJoinMs
+	}
+	return 0
+}
+
+func (x *WifiStats) GetMedianJoinMs() int64 {
+	if x != nil {
+		return x.MedianJoinMs
+	}
+	return 0
+}
+
+func (x *WifiStats) GetSlowestJoinMs() int64 {
+	if x != nil {
+		return x.SlowestJoinMs
+	}
+	return 0
+}
+
+func (x *WifiStats) GetTimeoutMs() int64 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
+}
+
+func (x *WifiStats) GetHint() string {
+	if x != nil {
+		return x.Hint
+	}
+	return ""
+}
+
 type Command struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Cmd           string                 `protobuf:"bytes,1,opt,name=cmd,proto3" json:"cmd,omitempty"`
@@ -526,7 +661,7 @@ type Command struct {
 
 func (x *Command) Reset() {
 	*x = Command{}
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[8]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -538,7 +673,7 @@ func (x *Command) String() string {
 func (*Command) ProtoMessage() {}
 
 func (x *Command) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[8]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -551,7 +686,7 @@ func (x *Command) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Command.ProtoReflect.Descriptor instead.
 func (*Command) Descriptor() ([]byte, []int) {
-	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{8}
+	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Command) GetCmd() string {
@@ -572,7 +707,7 @@ type DeviceCommand struct {
 
 func (x *DeviceCommand) Reset() {
 	*x = DeviceCommand{}
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[9]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -584,7 +719,7 @@ func (x *DeviceCommand) String() string {
 func (*DeviceCommand) ProtoMessage() {}
 
 func (x *DeviceCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[9]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -597,7 +732,7 @@ func (x *DeviceCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeviceCommand.ProtoReflect.Descriptor instead.
 func (*DeviceCommand) Descriptor() ([]byte, []int) {
-	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{9}
+	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DeviceCommand) GetSerial() string {
@@ -633,7 +768,7 @@ type CommandResult struct {
 
 func (x *CommandResult) Reset() {
 	*x = CommandResult{}
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[10]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -645,7 +780,7 @@ func (x *CommandResult) String() string {
 func (*CommandResult) ProtoMessage() {}
 
 func (x *CommandResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[10]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -658,7 +793,7 @@ func (x *CommandResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandResult.ProtoReflect.Descriptor instead.
 func (*CommandResult) Descriptor() ([]byte, []int) {
-	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{10}
+	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CommandResult) GetPlaceInQueue() int32 {
@@ -702,7 +837,7 @@ type ForwardData struct {
 
 func (x *ForwardData) Reset() {
 	*x = ForwardData{}
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[11]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -714,7 +849,7 @@ func (x *ForwardData) String() string {
 func (*ForwardData) ProtoMessage() {}
 
 func (x *ForwardData) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[11]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -727,7 +862,7 @@ func (x *ForwardData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardData.ProtoReflect.Descriptor instead.
 func (*ForwardData) Descriptor() ([]byte, []int) {
-	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{11}
+	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ForwardData) GetPayload() isForwardData_Payload {
@@ -781,7 +916,7 @@ type ForwardSetup struct {
 
 func (x *ForwardSetup) Reset() {
 	*x = ForwardSetup{}
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[12]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -793,7 +928,7 @@ func (x *ForwardSetup) String() string {
 func (*ForwardSetup) ProtoMessage() {}
 
 func (x *ForwardSetup) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_devicesource_devicesource_proto_msgTypes[12]
+	mi := &file_proto_devicesource_devicesource_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -806,7 +941,7 @@ func (x *ForwardSetup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardSetup.ProtoReflect.Descriptor instead.
 func (*ForwardSetup) Descriptor() ([]byte, []int) {
-	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{12}
+	return file_proto_devicesource_devicesource_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ForwardSetup) GetSerial() string {
@@ -848,7 +983,7 @@ const file_proto_devicesource_devicesource_proto_rawDesc = "" +
 	"\x03OFF\x10\x01\x12\x06\n" +
 	"\x02ON\x10\x02\"9\n" +
 	"\aDevices\x12.\n" +
-	"\adevices\x18\x01 \x03(\v2\x14.devicesource.DeviceR\adevices\"\xeb\x01\n" +
+	"\adevices\x18\x01 \x03(\v2\x14.devicesource.DeviceR\adevices\"\x98\x02\n" +
 	"\x06Device\x12\x16\n" +
 	"\x06serial\x18\x01 \x01(\tR\x06serial\x12\"\n" +
 	"\fmanufacturer\x18\x02 \x01(\tR\fmanufacturer\x12\x14\n" +
@@ -857,7 +992,25 @@ const file_proto_devicesource_devicesource_proto_rawDesc = "" +
 	"\x03sdk\x18\x05 \x01(\x05R\x03sdk\x12#\n" +
 	"\raccount_types\x18\x06 \x03(\tR\faccountTypes\x12$\n" +
 	"\x0elast_reboot_ms\x18\a \x01(\x03R\flastRebootMs\x12\x18\n" +
-	"\awarning\x18\b \x01(\tR\awarning\"\x1b\n" +
+	"\awarning\x18\b \x01(\tR\awarning\x12+\n" +
+	"\x04wifi\x18\t \x01(\v2\x17.devicesource.WifiStatsR\x04wifi\"\xcd\x03\n" +
+	"\tWifiStats\x12\x14\n" +
+	"\x05joins\x18\x01 \x01(\x05R\x05joins\x12\x1a\n" +
+	"\bfailures\x18\x02 \x01(\x05R\bfailures\x12[\n" +
+	"\x12failures_by_reason\x18\x03 \x03(\v2-.devicesource.WifiStats.FailuresByReasonEntryR\x10failuresByReason\x12!\n" +
+	"\flast_failure\x18\x04 \x01(\tR\vlastFailure\x12&\n" +
+	"\x0flast_failure_ms\x18\x05 \x01(\x03R\rlastFailureMs\x12 \n" +
+	"\flast_join_ms\x18\x06 \x01(\x03R\n" +
+	"lastJoinMs\x12$\n" +
+	"\x0emedian_join_ms\x18\a \x01(\x03R\fmedianJoinMs\x12&\n" +
+	"\x0fslowest_join_ms\x18\b \x01(\x03R\rslowestJoinMs\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\t \x01(\x03R\ttimeoutMs\x12\x12\n" +
+	"\x04hint\x18\n" +
+	" \x01(\tR\x04hint\x1aC\n" +
+	"\x15FailuresByReasonEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"\x1b\n" +
 	"\aCommand\x12\x10\n" +
 	"\x03cmd\x18\x01 \x01(\tR\x03cmd\"j\n" +
 	"\rDeviceCommand\x12\x16\n" +
@@ -900,7 +1053,7 @@ func file_proto_devicesource_devicesource_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_devicesource_devicesource_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_devicesource_devicesource_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_proto_devicesource_devicesource_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_proto_devicesource_devicesource_proto_goTypes = []any{
 	(WifiRequest_State)(0),        // 0: devicesource.WifiRequest.State
 	(*WakeRequest)(nil),           // 1: devicesource.WakeRequest
@@ -911,38 +1064,42 @@ var file_proto_devicesource_devicesource_proto_goTypes = []any{
 	(*WifiRequest)(nil),           // 6: devicesource.WifiRequest
 	(*Devices)(nil),               // 7: devicesource.Devices
 	(*Device)(nil),                // 8: devicesource.Device
-	(*Command)(nil),               // 9: devicesource.Command
-	(*DeviceCommand)(nil),         // 10: devicesource.DeviceCommand
-	(*CommandResult)(nil),         // 11: devicesource.CommandResult
-	(*ForwardData)(nil),           // 12: devicesource.ForwardData
-	(*ForwardSetup)(nil),          // 13: devicesource.ForwardSetup
-	(*emptypb.Empty)(nil),         // 14: google.protobuf.Empty
+	(*WifiStats)(nil),             // 9: devicesource.WifiStats
+	(*Command)(nil),               // 10: devicesource.Command
+	(*DeviceCommand)(nil),         // 11: devicesource.DeviceCommand
+	(*CommandResult)(nil),         // 12: devicesource.CommandResult
+	(*ForwardData)(nil),           // 13: devicesource.ForwardData
+	(*ForwardSetup)(nil),          // 14: devicesource.ForwardSetup
+	nil,                           // 15: devicesource.WifiStats.FailuresByReasonEntry
+	(*emptypb.Empty)(nil),         // 16: google.protobuf.Empty
 }
 var file_proto_devicesource_devicesource_proto_depIdxs = []int32{
 	0,  // 0: devicesource.WifiRequest.state:type_name -> devicesource.WifiRequest.State
 	8,  // 1: devicesource.Devices.devices:type_name -> devicesource.Device
-	13, // 2: devicesource.ForwardData.setup:type_name -> devicesource.ForwardSetup
-	14, // 3: devicesource.DeviceSource.GetDevices:input_type -> google.protobuf.Empty
-	9,  // 4: devicesource.DeviceSource.EnqueueCommand:input_type -> devicesource.Command
-	10, // 5: devicesource.DeviceSource.ExecOnDevice:input_type -> devicesource.DeviceCommand
-	12, // 6: devicesource.DeviceSource.ForwardToDevice:input_type -> devicesource.ForwardData
-	6,  // 7: devicesource.DeviceSource.SetWifi:input_type -> devicesource.WifiRequest
-	4,  // 8: devicesource.DeviceSource.ResetPackages:input_type -> devicesource.ResetPackagesRequest
-	1,  // 9: devicesource.DeviceSource.Wake:input_type -> devicesource.WakeRequest
-	2,  // 10: devicesource.DeviceSource.RebootIfStale:input_type -> devicesource.RebootRequest
-	7,  // 11: devicesource.DeviceSource.GetDevices:output_type -> devicesource.Devices
-	11, // 12: devicesource.DeviceSource.EnqueueCommand:output_type -> devicesource.CommandResult
-	11, // 13: devicesource.DeviceSource.ExecOnDevice:output_type -> devicesource.CommandResult
-	12, // 14: devicesource.DeviceSource.ForwardToDevice:output_type -> devicesource.ForwardData
-	14, // 15: devicesource.DeviceSource.SetWifi:output_type -> google.protobuf.Empty
-	5,  // 16: devicesource.DeviceSource.ResetPackages:output_type -> devicesource.ResetPackagesResponse
-	14, // 17: devicesource.DeviceSource.Wake:output_type -> google.protobuf.Empty
-	3,  // 18: devicesource.DeviceSource.RebootIfStale:output_type -> devicesource.RebootResponse
-	11, // [11:19] is the sub-list for method output_type
-	3,  // [3:11] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	9,  // 2: devicesource.Device.wifi:type_name -> devicesource.WifiStats
+	15, // 3: devicesource.WifiStats.failures_by_reason:type_name -> devicesource.WifiStats.FailuresByReasonEntry
+	14, // 4: devicesource.ForwardData.setup:type_name -> devicesource.ForwardSetup
+	16, // 5: devicesource.DeviceSource.GetDevices:input_type -> google.protobuf.Empty
+	10, // 6: devicesource.DeviceSource.EnqueueCommand:input_type -> devicesource.Command
+	11, // 7: devicesource.DeviceSource.ExecOnDevice:input_type -> devicesource.DeviceCommand
+	13, // 8: devicesource.DeviceSource.ForwardToDevice:input_type -> devicesource.ForwardData
+	6,  // 9: devicesource.DeviceSource.SetWifi:input_type -> devicesource.WifiRequest
+	4,  // 10: devicesource.DeviceSource.ResetPackages:input_type -> devicesource.ResetPackagesRequest
+	1,  // 11: devicesource.DeviceSource.Wake:input_type -> devicesource.WakeRequest
+	2,  // 12: devicesource.DeviceSource.RebootIfStale:input_type -> devicesource.RebootRequest
+	7,  // 13: devicesource.DeviceSource.GetDevices:output_type -> devicesource.Devices
+	12, // 14: devicesource.DeviceSource.EnqueueCommand:output_type -> devicesource.CommandResult
+	12, // 15: devicesource.DeviceSource.ExecOnDevice:output_type -> devicesource.CommandResult
+	13, // 16: devicesource.DeviceSource.ForwardToDevice:output_type -> devicesource.ForwardData
+	16, // 17: devicesource.DeviceSource.SetWifi:output_type -> google.protobuf.Empty
+	5,  // 18: devicesource.DeviceSource.ResetPackages:output_type -> devicesource.ResetPackagesResponse
+	16, // 19: devicesource.DeviceSource.Wake:output_type -> google.protobuf.Empty
+	3,  // 20: devicesource.DeviceSource.RebootIfStale:output_type -> devicesource.RebootResponse
+	13, // [13:21] is the sub-list for method output_type
+	5,  // [5:13] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_proto_devicesource_devicesource_proto_init() }
@@ -950,7 +1107,7 @@ func file_proto_devicesource_devicesource_proto_init() {
 	if File_proto_devicesource_devicesource_proto != nil {
 		return
 	}
-	file_proto_devicesource_devicesource_proto_msgTypes[11].OneofWrappers = []any{
+	file_proto_devicesource_devicesource_proto_msgTypes[12].OneofWrappers = []any{
 		(*ForwardData_Setup)(nil),
 		(*ForwardData_Data)(nil),
 	}
@@ -960,7 +1117,7 @@ func file_proto_devicesource_devicesource_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_devicesource_devicesource_proto_rawDesc), len(file_proto_devicesource_devicesource_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   13,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
