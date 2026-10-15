@@ -4,6 +4,31 @@ SAIR lets CI pipelines safely share physical Android devices. It provides
 device locking, ADB protocol translation, and per-runner isolation so multiple
 jobs never collide on the same device.
 
+## Why
+
+Without SAIR, every CI job that can see a phone uses it at the same time:
+
+```
+CI job 1 ──┐
+           ├──▶ adb ──▶ Phone     ✗ both jobs install / uninstall the same APK
+CI job 2 ──┘                      ✗ one job's reboot or settings change breaks
+                                    the other's tests mid-run
+                                  ✗ connectedCheck runs on every attached
+                                    phone, including ones another job is using
+```
+
+With SAIR, a job must hold a lock before it sees a device, and waiting jobs
+queue:
+
+```
+CI job 1 ──┐                 ┌──▶ Phone A (locked by job 1)
+           ├──▶ Proxy ───────┤
+CI job 2 ──┘      ▲          └──▶ Phone B (locked by job 2)
+                  │ locks
+CI job 3 ···  Orchestrator: job 3 waits in the queue until
+                            a phone is released
+```
+
 ## GitHub Action
 
 This repo is also a GitHub Action that puts `sair-acquire`, `sair-release` and
