@@ -154,3 +154,40 @@ func TestSetWifiUnmanagedWithoutSSID(t *testing.T) {
 		t.Fatalf("err = %v, cmds = %q; want FailedPrecondition and no commands", err, *cmds)
 	}
 }
+
+// Each ON is counted per phone with why it failed and how long a success
+// took, and the hint points at the fix (sair#96).
+func TestWifiJoinStats(t *testing.T) {
+	s := &Server{wifiSSID: "it's here", wifiPingHost: "dns.google", wifiTimeout: time.Millisecond}
+	if s.wifiStatsReport("ABC") != nil {
+		t.Fatal("stats before the first ON")
+	}
+	on := func() { s.SetWifi(context.Background(), &pb.WifiRequest{Serial: "ABC", State: pb.WifiRequest_ON}) }
+	fakeShell(s, map[string]string{"cmd wifi status": statusNotConnected})
+	on()
+	fakeShell(s, map[string]string{"cmd wifi status": statusConnected, "dumpsys connectivity": connectivityWifi}, "ping")
+	on()
+	fakeShell(s, map[string]string{"cmd wifi status": statusConnected, "dumpsys connectivity": connectivityWifi})
+	on()
+
+	r := s.wifiStatsReport("ABC")
+	if r.Joins != 3 || r.Failures != 2 || !reflect.DeepEqual(r.FailuresByReason, map[string]int32{"not_associated": 1, "no_route": 1}) {
+		t.Errorf("joins %d failures %d byReason %v, want 3, 2, one not_associated and one no_route", r.Joins, r.Failures, r.FailuresByReason)
+	}
+	if !strings.Contains(r.LastFailure, "cannot reach dns.google") || r.LastFailureMs == 0 || r.TimeoutMs != 1 {
+		t.Errorf("last failure %q at %d, timeout %d", r.LastFailure, r.LastFailureMs, r.TimeoutMs)
+	}
+	if r.Hint != "" {
+		t.Errorf("hint %q, want none: a success at once, failures split", r.Hint)
+	}
+
+	st := s.wifi["ABC"]
+	st.slowest = 50 * time.Second
+	if h := st.hint(60 * time.Second); !strings.Contains(h, "raise WIFI_CONNECT_TIMEOUT_SECONDS") {
+		t.Errorf("slow join hint %q", h)
+	}
+	st.slowest, st.byReason["not_associated"] = 0, 2
+	if h := st.hint(60 * time.Second); !strings.Contains(h, "Move it") {
+		t.Errorf("not associated hint %q", h)
+	}
+}

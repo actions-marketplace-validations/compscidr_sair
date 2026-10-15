@@ -336,11 +336,13 @@ func (a *HTTPApi) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Serial     string `json:"serial"`
 		LastReboot string `json:"last_reboot,omitempty"`
 		Warning    string `json:"warning,omitempty"`
+		// How often it failed to get online on the bench Wi-Fi (sair#96).
+		Wifi *pb.WifiStats `json:"wifi,omitempty"`
 	}
 	devices := []devInfo{}
 	if a.deviceListTracker != nil {
 		for _, d := range a.deviceListTracker.GetDevices() {
-			di := devInfo{Serial: d.Serial, Warning: d.Warning}
+			di := devInfo{Serial: d.Serial, Warning: d.Warning, Wifi: d.Wifi}
 			if d.LastRebootMs > 0 {
 				di.LastReboot = time.UnixMilli(d.LastRebootMs).UTC().Format(time.RFC3339)
 			}
@@ -365,6 +367,9 @@ type deviceInfo struct {
 	AccountTypes []string `json:"account_types,omitempty"`
 	LastRebootMs int64    `json:"last_reboot_ms,omitempty"`
 	Warning      string   `json:"warning,omitempty"`
+	// The device source sends its devicesource.WifiStats; the orchestrator's
+	// copy of the message has the same fields, so it decodes straight into it.
+	Wifi *pb.WifiStats `json:"wifi,omitempty"`
 }
 
 func (a *HTTPApi) handleRegisterDevices(w http.ResponseWriter, r *http.Request) {
@@ -395,6 +400,7 @@ func (a *HTTPApi) handleRegisterDevices(w http.ResponseWriter, r *http.Request) 
 			AccountTypes: d.AccountTypes,
 			LastRebootMs: d.LastRebootMs,
 			Warning:      d.Warning,
+			Wifi:         d.Wifi,
 		})
 	}
 
