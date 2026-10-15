@@ -4,9 +4,12 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	pb "github.com/compscidr/sair/proto/orchestrator"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // fakeOrchClient records the last AcquireLock request and returns a canned
@@ -17,6 +20,8 @@ type fakeOrchClient struct {
 	lastRelease *pb.ReleaseLockRequest
 	resp        *pb.AcquireLockResponse
 	err         error
+	unavailable int // AcquireLock calls that fail with Unavailable before resp/err
+	acquires    int
 }
 
 func (f *fakeOrchClient) ReleaseLock(ctx context.Context, in *pb.ReleaseLockRequest, opts ...grpc.CallOption) (*pb.ReleaseLockResponse, error) {
@@ -53,7 +58,30 @@ func TestLockRequestsCarryRunURLAndStatus(t *testing.T) {
 
 func (f *fakeOrchClient) AcquireLock(ctx context.Context, in *pb.AcquireLockRequest, opts ...grpc.CallOption) (*pb.AcquireLockResponse, error) {
 	f.lastAcquire = in
+	f.acquires++
+	if f.acquires <= f.unavailable {
+		return nil, status.Error(codes.Unavailable, "error reading from server: connection reset by peer")
+	}
 	return f.resp, f.err
+}
+
+func TestAcquireLockRetriesAConnectionReset(t *testing.T) {
+	defer func(d time.Duration) { acquireRetryDelay = d }(acquireRetryDelay)
+	acquireRetryDelay = time.Millisecond
+	fake := &fakeOrchClient{unavailable: 2, resp: &pb.AcquireLockResponse{LockId: "lock-1", Serials: []string{"DEVICE_A"}}}
+	router := &CommandRouter{orchClient: fake, apiKey: "test-key"}
+
+	result, err := router.AcquireLock(nil, 1, 30, "", "", 0, true, "")
+	if err != nil || result.LockID != "lock-1" || fake.acquires != 3 {
+		t.Fatalf("got %+v, %v after %d calls; want lock-1 on the third", result, err, fake.acquires)
+	}
+
+	// Anything but Unavailable is the orchestrator's answer: no retry.
+	fake = &fakeOrchClient{err: status.Error(codes.InvalidArgument, "cannot satisfy request")}
+	router.orchClient = fake
+	if _, err := router.AcquireLock(nil, 2, 30, "", "", 0, true, ""); status.Code(err) != codes.InvalidArgument || fake.acquires != 1 {
+		t.Fatalf("got %v after %d calls; want InvalidArgument after 1", err, fake.acquires)
+	}
 }
 
 func TestAcquireLockSendsCount(t *testing.T) {
