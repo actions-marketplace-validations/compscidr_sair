@@ -42,11 +42,15 @@ jobs:
       - name: Validate the MCP bundle manifest
         run: npx -y @anthropic-ai/mcpb@2.1.2 validate mcpb/manifest.json
 
-      # The release workflow publishes server.json; check it against the live registry now.
+      # Check server.json as a release would publish it (filled by the same script) against the live registry.
       - name: Validate server.json against the MCP registry
         run: |
           curl -fsSL https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz | tar xz -C /tmp mcp-publisher
+          echo bundle > /tmp/sair-mcp.mcpb
+          mcpb/release-server-json v0.0.1-ci /tmp/sair-mcp.mcpb
+          jq -e '.version == "0.0.1-ci" and (.packages[0].identifier | endswith("/v0.0.1-ci/sair-mcp.mcpb")) and (.packages[0].fileSha256 | length == 64)' server.json
           /tmp/mcp-publisher validate
+          git checkout server.json
 
   docker-build:
     runs-on: ubuntu-latest

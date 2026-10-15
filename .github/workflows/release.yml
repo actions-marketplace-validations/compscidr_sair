@@ -95,12 +95,7 @@ jobs:
       # A version can be published only once; every release gets its own.
       - name: Publish to the MCP registry
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          jq --arg v "${TAG#v}" --arg t "$TAG" --arg sha "$(sha256sum sair-mcp.mcpb | cut -d' ' -f1)" \
-            '.version = $v
-             | .packages[0].identifier = "https://github.com/compscidr/sair/releases/download/\($t)/sair-mcp.mcpb"
-             | .packages[0].fileSha256 = $sha' server.json > server.release.json
-          mv server.release.json server.json
+          mcpb/release-server-json "${{ github.event.release.tag_name }}" sair-mcp.mcpb
           curl -fsSL https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz | tar xz mcp-publisher
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
