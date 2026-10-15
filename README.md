@@ -361,7 +361,7 @@ grpcurl -plaintext localhost:8080 devicesource.DeviceSource/GetDevices
 | `ORCHESTRATOR_ADDR` | `orchestrator.sair.run:9090` | Orchestrator gRPC address (lock management) |
 | `ORCHESTRATOR_TLS` | `false` (auto-enabled for hosted) | Use TLS for orchestrator connection |
 | `SAIR_API_KEY` | `dev-key-123` | API key for authentication |
-| `SAIR_GUEST_API_KEYS` | empty | Comma-separated API keys of other accounts allowed to lock this proxy's devices. See "Guest tenants" below. |
+| `SAIR_GUEST_API_KEYS` | empty | Comma-separated API keys of **other** accounts allowed to lock this proxy's devices. Every key on the proxy's own account is accepted without being listed. See "Guest tenants" below. |
 | `ADB_PROXY_PORT` | `5037` | ADB protocol listen port |
 | `PROXY_HTTP_PORT` | `8550` | HTTP API listen port |
 | `PROXY_HTTP_HOST` | `0.0.0.0` | HTTP API bind address |
@@ -382,6 +382,12 @@ The proxy keeps one long-lived stream open to the orchestrator carrying its vers
 A lock can include devices connected to another of your proxies (or shared with you by another account). The orchestrator relays those ADB connections between the two proxies, so `adb` on the runner sees them like local devices. Only outbound connections are used, so proxies behind NAT work; the orchestrator is in the data path for remote devices only.
 
 #### Guest tenants
+
+Every key on the proxy's own account is accepted as it is: a second key you
+create, or one an invited team member creates, works on your benches without
+a config change. The proxy asks the orchestrator which account an unlisted
+key belongs to and caches the answer for 30 seconds. Against an orchestrator
+that predates this check, only `SAIR_API_KEY` and the guest keys below work.
 
 One bench can serve two accounts. A typical case: a machine whose phones are
 registered under a personal account also runs CI for a company account that
@@ -556,8 +562,9 @@ phone. Through UI automation that is enough to use any app the phone is signed
 in to: mail, the browser's signed-in sessions, the Play Store. The proxy can't
 filter this reliably, because a legitimate UiAutomator test does the same
 things. **Whatever account is signed in on a bench phone is usable by anyone
-who can lock it:** your own CI jobs, every key in `SAIR_GUEST_API_KEYS`, and
-every SAIR account if the phone is shared in the portal.
+who can lock it:** every key on your account (yours and your invited team's),
+every key in `SAIR_GUEST_API_KEYS`, and every SAIR account if the phone is
+shared in the portal.
 
 - **Do the phones need an account at all?** adb installs, instrumentation,
   BLE, Wi-Fi Direct and Nearby Connections all work without one. The usual

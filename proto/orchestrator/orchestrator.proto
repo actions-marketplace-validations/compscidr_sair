@@ -10,6 +10,11 @@ service Orchestrator {
   rpc ReleaseLock(ReleaseLockRequest) returns (ReleaseLockResponse) {}
   rpc LockHeartbeat(LockHeartbeatRequest) returns (LockHeartbeatResponse) {}
   rpc ReportDevices(ReportDevicesRequest) returns (ReportDevicesResponse) {}
+  // Whether an API key belongs to the calling proxy's own account (sair#120),
+  // so a proxy can accept every key on its owner's account without listing
+  // each one as a guest key. Keys of other accounts, listed as guests or not,
+  // and unknown keys both answer false; the proxy never learns which.
+  rpc CheckKey(CheckKeyRequest) returns (CheckKeyResponse) {}
   // One long-lived stream per proxy: version and identity first, then device
   // reports, lock heartbeats, lock log entries and bench events; the orchestrator pushes
   // lock expiry back. Replaces the periodic unary calls for proxies that use it.
@@ -167,6 +172,14 @@ message LockHeartbeatRequest {
 
 message LockHeartbeatResponse {
   bool alive = 1;
+}
+
+message CheckKeyRequest {
+  string api_key = 1;
+}
+
+message CheckKeyResponse {
+  bool same_tenant = 1;
 }
 
 // ReportDevicesRequest is sent by the proxy to report its current device list.

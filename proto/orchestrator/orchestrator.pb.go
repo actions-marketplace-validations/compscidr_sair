@@ -1044,6 +1044,94 @@ func (x *LockHeartbeatResponse) GetAlive() bool {
 	return false
 }
 
+type CheckKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ApiKey        string                 `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckKeyRequest) Reset() {
+	*x = CheckKeyRequest{}
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckKeyRequest) ProtoMessage() {}
+
+func (x *CheckKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckKeyRequest.ProtoReflect.Descriptor instead.
+func (*CheckKeyRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *CheckKeyRequest) GetApiKey() string {
+	if x != nil {
+		return x.ApiKey
+	}
+	return ""
+}
+
+type CheckKeyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SameTenant    bool                   `protobuf:"varint,1,opt,name=same_tenant,json=sameTenant,proto3" json:"same_tenant,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckKeyResponse) Reset() {
+	*x = CheckKeyResponse{}
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckKeyResponse) ProtoMessage() {}
+
+func (x *CheckKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckKeyResponse.ProtoReflect.Descriptor instead.
+func (*CheckKeyResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CheckKeyResponse) GetSameTenant() bool {
+	if x != nil {
+		return x.SameTenant
+	}
+	return false
+}
+
 // ReportDevicesRequest is sent by the proxy to report its current device list.
 // The busy field in DeviceInfo is ignored; busy state is managed by the orchestrator.
 type ReportDevicesRequest struct {
@@ -1055,7 +1143,7 @@ type ReportDevicesRequest struct {
 
 func (x *ReportDevicesRequest) Reset() {
 	*x = ReportDevicesRequest{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[12]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1067,7 +1155,7 @@ func (x *ReportDevicesRequest) String() string {
 func (*ReportDevicesRequest) ProtoMessage() {}
 
 func (x *ReportDevicesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[12]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1080,7 +1168,7 @@ func (x *ReportDevicesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportDevicesRequest.ProtoReflect.Descriptor instead.
 func (*ReportDevicesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{12}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ReportDevicesRequest) GetDevices() []*DeviceInfo {
@@ -1098,7 +1186,7 @@ type ReportDevicesResponse struct {
 
 func (x *ReportDevicesResponse) Reset() {
 	*x = ReportDevicesResponse{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[13]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1110,7 +1198,7 @@ func (x *ReportDevicesResponse) String() string {
 func (*ReportDevicesResponse) ProtoMessage() {}
 
 func (x *ReportDevicesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[13]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1123,7 +1211,7 @@ func (x *ReportDevicesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportDevicesResponse.ProtoReflect.Descriptor instead.
 func (*ReportDevicesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{13}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{15}
 }
 
 // Proxy -> orchestrator envelope. hello is always the first message.
@@ -1144,7 +1232,7 @@ type ProxyMessage struct {
 
 func (x *ProxyMessage) Reset() {
 	*x = ProxyMessage{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[14]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1156,7 +1244,7 @@ func (x *ProxyMessage) String() string {
 func (*ProxyMessage) ProtoMessage() {}
 
 func (x *ProxyMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[14]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1169,7 +1257,7 @@ func (x *ProxyMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyMessage.ProtoReflect.Descriptor instead.
 func (*ProxyMessage) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{14}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ProxyMessage) GetMsg() isProxyMessage_Msg {
@@ -1285,7 +1373,7 @@ type ProxyHello struct {
 
 func (x *ProxyHello) Reset() {
 	*x = ProxyHello{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[15]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1297,7 +1385,7 @@ func (x *ProxyHello) String() string {
 func (*ProxyHello) ProtoMessage() {}
 
 func (x *ProxyHello) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[15]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1310,7 +1398,7 @@ func (x *ProxyHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyHello.ProtoReflect.Descriptor instead.
 func (*ProxyHello) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{15}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ProxyHello) GetVersion() string {
@@ -1351,7 +1439,7 @@ type LockLog struct {
 
 func (x *LockLog) Reset() {
 	*x = LockLog{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[16]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1363,7 +1451,7 @@ func (x *LockLog) String() string {
 func (*LockLog) ProtoMessage() {}
 
 func (x *LockLog) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[16]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1376,7 +1464,7 @@ func (x *LockLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LockLog.ProtoReflect.Descriptor instead.
 func (*LockLog) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{16}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *LockLog) GetLockId() string {
@@ -1408,7 +1496,7 @@ type OrchestratorMessage struct {
 
 func (x *OrchestratorMessage) Reset() {
 	*x = OrchestratorMessage{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[17]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1420,7 +1508,7 @@ func (x *OrchestratorMessage) String() string {
 func (*OrchestratorMessage) ProtoMessage() {}
 
 func (x *OrchestratorMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[17]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1433,7 +1521,7 @@ func (x *OrchestratorMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrchestratorMessage.ProtoReflect.Descriptor instead.
 func (*OrchestratorMessage) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{17}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *OrchestratorMessage) GetMsg() isOrchestratorMessage_Msg {
@@ -1502,7 +1590,7 @@ type OrchestratorWelcome struct {
 
 func (x *OrchestratorWelcome) Reset() {
 	*x = OrchestratorWelcome{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[18]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1514,7 +1602,7 @@ func (x *OrchestratorWelcome) String() string {
 func (*OrchestratorWelcome) ProtoMessage() {}
 
 func (x *OrchestratorWelcome) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[18]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1527,7 +1615,7 @@ func (x *OrchestratorWelcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrchestratorWelcome.ProtoReflect.Descriptor instead.
 func (*OrchestratorWelcome) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{18}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *OrchestratorWelcome) GetVersion() string {
@@ -1553,7 +1641,7 @@ type LockExpired struct {
 
 func (x *LockExpired) Reset() {
 	*x = LockExpired{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[19]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1565,7 +1653,7 @@ func (x *LockExpired) String() string {
 func (*LockExpired) ProtoMessage() {}
 
 func (x *LockExpired) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[19]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1578,7 +1666,7 @@ func (x *LockExpired) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LockExpired.ProtoReflect.Descriptor instead.
 func (*LockExpired) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{19}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *LockExpired) GetLockId() string {
@@ -1614,7 +1702,7 @@ type TunnelData struct {
 
 func (x *TunnelData) Reset() {
 	*x = TunnelData{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[20]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1626,7 +1714,7 @@ func (x *TunnelData) String() string {
 func (*TunnelData) ProtoMessage() {}
 
 func (x *TunnelData) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[20]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1639,7 +1727,7 @@ func (x *TunnelData) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelData.ProtoReflect.Descriptor instead.
 func (*TunnelData) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{20}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *TunnelData) GetPayload() isTunnelData_Payload {
@@ -1728,7 +1816,7 @@ type TunnelSetup struct {
 
 func (x *TunnelSetup) Reset() {
 	*x = TunnelSetup{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[21]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1740,7 +1828,7 @@ func (x *TunnelSetup) String() string {
 func (*TunnelSetup) ProtoMessage() {}
 
 func (x *TunnelSetup) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[21]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1753,7 +1841,7 @@ func (x *TunnelSetup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelSetup.ProtoReflect.Descriptor instead.
 func (*TunnelSetup) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{21}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *TunnelSetup) GetTunnelId() string {
@@ -1797,7 +1885,7 @@ type RelayOpen struct {
 
 func (x *RelayOpen) Reset() {
 	*x = RelayOpen{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[22]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1809,7 +1897,7 @@ func (x *RelayOpen) String() string {
 func (*RelayOpen) ProtoMessage() {}
 
 func (x *RelayOpen) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[22]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1822,7 +1910,7 @@ func (x *RelayOpen) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelayOpen.ProtoReflect.Descriptor instead.
 func (*RelayOpen) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{22}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *RelayOpen) GetTunnelId() string {
@@ -1865,7 +1953,7 @@ type RelayFailed struct {
 
 func (x *RelayFailed) Reset() {
 	*x = RelayFailed{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[23]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1877,7 +1965,7 @@ func (x *RelayFailed) String() string {
 func (*RelayFailed) ProtoMessage() {}
 
 func (x *RelayFailed) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[23]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1890,7 +1978,7 @@ func (x *RelayFailed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RelayFailed.ProtoReflect.Descriptor instead.
 func (*RelayFailed) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{23}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *RelayFailed) GetTunnelId() string {
@@ -1934,7 +2022,7 @@ type BenchEvent struct {
 
 func (x *BenchEvent) Reset() {
 	*x = BenchEvent{}
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[24]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1946,7 +2034,7 @@ func (x *BenchEvent) String() string {
 func (*BenchEvent) ProtoMessage() {}
 
 func (x *BenchEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[24]
+	mi := &file_proto_orchestrator_orchestrator_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1959,7 +2047,7 @@ func (x *BenchEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BenchEvent.ProtoReflect.Descriptor instead.
 func (*BenchEvent) Descriptor() ([]byte, []int) {
-	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{24}
+	return file_proto_orchestrator_orchestrator_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *BenchEvent) GetTimestampMs() int64 {
@@ -2097,7 +2185,12 @@ const file_proto_orchestrator_orchestrator_proto_rawDesc = "" +
 	"\alock_id\x18\x01 \x01(\tR\x06lockId\x12,\n" +
 	"\x03log\x18\x02 \x03(\v2\x1a.orchestrator.LockLogEntryR\x03log\"-\n" +
 	"\x15LockHeartbeatResponse\x12\x14\n" +
-	"\x05alive\x18\x01 \x01(\bR\x05alive\"J\n" +
+	"\x05alive\x18\x01 \x01(\bR\x05alive\"*\n" +
+	"\x0fCheckKeyRequest\x12\x17\n" +
+	"\aapi_key\x18\x01 \x01(\tR\x06apiKey\"3\n" +
+	"\x10CheckKeyResponse\x12\x1f\n" +
+	"\vsame_tenant\x18\x01 \x01(\bR\n" +
+	"sameTenant\"J\n" +
 	"\x14ReportDevicesRequest\x122\n" +
 	"\adevices\x18\x01 \x03(\v2\x18.orchestrator.DeviceInfoR\adevices\"\x17\n" +
 	"\x15ReportDevicesResponse\"\xf1\x02\n" +
@@ -2178,13 +2271,14 @@ const file_proto_orchestrator_orchestrator_proto_rawDesc = "" +
 	"\x1cBENCH_EVENT_KIND_PROXY_START\x10\b\x12%\n" +
 	"!BENCH_EVENT_KIND_DEVICE_SOURCE_UP\x10\t\x12(\n" +
 	"$BENCH_EVENT_KIND_DEVICE_SOURCE_STALE\x10\n" +
-	"2\xd3\x04\n" +
+	"2\xa0\x05\n" +
 	"\fOrchestrator\x12K\n" +
 	"\vListDevices\x12 .orchestrator.ListDevicesRequest\x1a\x18.orchestrator.DeviceList\"\x00\x12T\n" +
 	"\vAcquireLock\x12 .orchestrator.AcquireLockRequest\x1a!.orchestrator.AcquireLockResponse\"\x00\x12T\n" +
 	"\vReleaseLock\x12 .orchestrator.ReleaseLockRequest\x1a!.orchestrator.ReleaseLockResponse\"\x00\x12Z\n" +
 	"\rLockHeartbeat\x12\".orchestrator.LockHeartbeatRequest\x1a#.orchestrator.LockHeartbeatResponse\"\x00\x12Z\n" +
-	"\rReportDevices\x12\".orchestrator.ReportDevicesRequest\x1a#.orchestrator.ReportDevicesResponse\"\x00\x12N\n" +
+	"\rReportDevices\x12\".orchestrator.ReportDevicesRequest\x1a#.orchestrator.ReportDevicesResponse\"\x00\x12K\n" +
+	"\bCheckKey\x12\x1d.orchestrator.CheckKeyRequest\x1a\x1e.orchestrator.CheckKeyResponse\"\x00\x12N\n" +
 	"\aSession\x12\x1a.orchestrator.ProxyMessage\x1a!.orchestrator.OrchestratorMessage\"\x00(\x010\x01\x12B\n" +
 	"\x06Tunnel\x12\x18.orchestrator.TunnelData\x1a\x18.orchestrator.TunnelData\"\x00(\x010\x01B.Z,github.com/compscidr/sair/proto/orchestratorb\x06proto3"
 
@@ -2201,7 +2295,7 @@ func file_proto_orchestrator_orchestrator_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_orchestrator_orchestrator_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_orchestrator_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_proto_orchestrator_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_proto_orchestrator_orchestrator_proto_goTypes = []any{
 	(TunnelSide)(0),               // 0: orchestrator.TunnelSide
 	(BenchEventKind)(0),           // 1: orchestrator.BenchEventKind
@@ -2217,59 +2311,63 @@ var file_proto_orchestrator_orchestrator_proto_goTypes = []any{
 	(*ReleaseLockResponse)(nil),   // 11: orchestrator.ReleaseLockResponse
 	(*LockHeartbeatRequest)(nil),  // 12: orchestrator.LockHeartbeatRequest
 	(*LockHeartbeatResponse)(nil), // 13: orchestrator.LockHeartbeatResponse
-	(*ReportDevicesRequest)(nil),  // 14: orchestrator.ReportDevicesRequest
-	(*ReportDevicesResponse)(nil), // 15: orchestrator.ReportDevicesResponse
-	(*ProxyMessage)(nil),          // 16: orchestrator.ProxyMessage
-	(*ProxyHello)(nil),            // 17: orchestrator.ProxyHello
-	(*LockLog)(nil),               // 18: orchestrator.LockLog
-	(*OrchestratorMessage)(nil),   // 19: orchestrator.OrchestratorMessage
-	(*OrchestratorWelcome)(nil),   // 20: orchestrator.OrchestratorWelcome
-	(*LockExpired)(nil),           // 21: orchestrator.LockExpired
-	(*TunnelData)(nil),            // 22: orchestrator.TunnelData
-	(*TunnelSetup)(nil),           // 23: orchestrator.TunnelSetup
-	(*RelayOpen)(nil),             // 24: orchestrator.RelayOpen
-	(*RelayFailed)(nil),           // 25: orchestrator.RelayFailed
-	(*BenchEvent)(nil),            // 26: orchestrator.BenchEvent
-	nil,                           // 27: orchestrator.WifiStats.FailuresByReasonEntry
+	(*CheckKeyRequest)(nil),       // 14: orchestrator.CheckKeyRequest
+	(*CheckKeyResponse)(nil),      // 15: orchestrator.CheckKeyResponse
+	(*ReportDevicesRequest)(nil),  // 16: orchestrator.ReportDevicesRequest
+	(*ReportDevicesResponse)(nil), // 17: orchestrator.ReportDevicesResponse
+	(*ProxyMessage)(nil),          // 18: orchestrator.ProxyMessage
+	(*ProxyHello)(nil),            // 19: orchestrator.ProxyHello
+	(*LockLog)(nil),               // 20: orchestrator.LockLog
+	(*OrchestratorMessage)(nil),   // 21: orchestrator.OrchestratorMessage
+	(*OrchestratorWelcome)(nil),   // 22: orchestrator.OrchestratorWelcome
+	(*LockExpired)(nil),           // 23: orchestrator.LockExpired
+	(*TunnelData)(nil),            // 24: orchestrator.TunnelData
+	(*TunnelSetup)(nil),           // 25: orchestrator.TunnelSetup
+	(*RelayOpen)(nil),             // 26: orchestrator.RelayOpen
+	(*RelayFailed)(nil),           // 27: orchestrator.RelayFailed
+	(*BenchEvent)(nil),            // 28: orchestrator.BenchEvent
+	nil,                           // 29: orchestrator.WifiStats.FailuresByReasonEntry
 }
 var file_proto_orchestrator_orchestrator_proto_depIdxs = []int32{
 	4,  // 0: orchestrator.DeviceList.sources:type_name -> orchestrator.DeviceSourceInfo
 	5,  // 1: orchestrator.DeviceSourceInfo.devices:type_name -> orchestrator.DeviceInfo
 	6,  // 2: orchestrator.DeviceInfo.wifi:type_name -> orchestrator.WifiStats
-	27, // 3: orchestrator.WifiStats.failures_by_reason:type_name -> orchestrator.WifiStats.FailuresByReasonEntry
+	29, // 3: orchestrator.WifiStats.failures_by_reason:type_name -> orchestrator.WifiStats.FailuresByReasonEntry
 	5,  // 4: orchestrator.AcquireLockResponse.remote_devices:type_name -> orchestrator.DeviceInfo
 	9,  // 5: orchestrator.ReleaseLockRequest.log:type_name -> orchestrator.LockLogEntry
 	9,  // 6: orchestrator.LockHeartbeatRequest.log:type_name -> orchestrator.LockLogEntry
 	5,  // 7: orchestrator.ReportDevicesRequest.devices:type_name -> orchestrator.DeviceInfo
-	17, // 8: orchestrator.ProxyMessage.hello:type_name -> orchestrator.ProxyHello
-	14, // 9: orchestrator.ProxyMessage.devices:type_name -> orchestrator.ReportDevicesRequest
-	18, // 10: orchestrator.ProxyMessage.lock_log:type_name -> orchestrator.LockLog
+	19, // 8: orchestrator.ProxyMessage.hello:type_name -> orchestrator.ProxyHello
+	16, // 9: orchestrator.ProxyMessage.devices:type_name -> orchestrator.ReportDevicesRequest
+	20, // 10: orchestrator.ProxyMessage.lock_log:type_name -> orchestrator.LockLog
 	12, // 11: orchestrator.ProxyMessage.heartbeat:type_name -> orchestrator.LockHeartbeatRequest
-	25, // 12: orchestrator.ProxyMessage.relay_failed:type_name -> orchestrator.RelayFailed
-	26, // 13: orchestrator.ProxyMessage.event:type_name -> orchestrator.BenchEvent
+	27, // 12: orchestrator.ProxyMessage.relay_failed:type_name -> orchestrator.RelayFailed
+	28, // 13: orchestrator.ProxyMessage.event:type_name -> orchestrator.BenchEvent
 	9,  // 14: orchestrator.LockLog.entries:type_name -> orchestrator.LockLogEntry
-	20, // 15: orchestrator.OrchestratorMessage.welcome:type_name -> orchestrator.OrchestratorWelcome
-	21, // 16: orchestrator.OrchestratorMessage.lock_expired:type_name -> orchestrator.LockExpired
-	24, // 17: orchestrator.OrchestratorMessage.relay_open:type_name -> orchestrator.RelayOpen
-	23, // 18: orchestrator.TunnelData.setup:type_name -> orchestrator.TunnelSetup
+	22, // 15: orchestrator.OrchestratorMessage.welcome:type_name -> orchestrator.OrchestratorWelcome
+	23, // 16: orchestrator.OrchestratorMessage.lock_expired:type_name -> orchestrator.LockExpired
+	26, // 17: orchestrator.OrchestratorMessage.relay_open:type_name -> orchestrator.RelayOpen
+	25, // 18: orchestrator.TunnelData.setup:type_name -> orchestrator.TunnelSetup
 	0,  // 19: orchestrator.TunnelSetup.side:type_name -> orchestrator.TunnelSide
 	1,  // 20: orchestrator.BenchEvent.kind:type_name -> orchestrator.BenchEventKind
 	2,  // 21: orchestrator.Orchestrator.ListDevices:input_type -> orchestrator.ListDevicesRequest
 	7,  // 22: orchestrator.Orchestrator.AcquireLock:input_type -> orchestrator.AcquireLockRequest
 	10, // 23: orchestrator.Orchestrator.ReleaseLock:input_type -> orchestrator.ReleaseLockRequest
 	12, // 24: orchestrator.Orchestrator.LockHeartbeat:input_type -> orchestrator.LockHeartbeatRequest
-	14, // 25: orchestrator.Orchestrator.ReportDevices:input_type -> orchestrator.ReportDevicesRequest
-	16, // 26: orchestrator.Orchestrator.Session:input_type -> orchestrator.ProxyMessage
-	22, // 27: orchestrator.Orchestrator.Tunnel:input_type -> orchestrator.TunnelData
-	3,  // 28: orchestrator.Orchestrator.ListDevices:output_type -> orchestrator.DeviceList
-	8,  // 29: orchestrator.Orchestrator.AcquireLock:output_type -> orchestrator.AcquireLockResponse
-	11, // 30: orchestrator.Orchestrator.ReleaseLock:output_type -> orchestrator.ReleaseLockResponse
-	13, // 31: orchestrator.Orchestrator.LockHeartbeat:output_type -> orchestrator.LockHeartbeatResponse
-	15, // 32: orchestrator.Orchestrator.ReportDevices:output_type -> orchestrator.ReportDevicesResponse
-	19, // 33: orchestrator.Orchestrator.Session:output_type -> orchestrator.OrchestratorMessage
-	22, // 34: orchestrator.Orchestrator.Tunnel:output_type -> orchestrator.TunnelData
-	28, // [28:35] is the sub-list for method output_type
-	21, // [21:28] is the sub-list for method input_type
+	16, // 25: orchestrator.Orchestrator.ReportDevices:input_type -> orchestrator.ReportDevicesRequest
+	14, // 26: orchestrator.Orchestrator.CheckKey:input_type -> orchestrator.CheckKeyRequest
+	18, // 27: orchestrator.Orchestrator.Session:input_type -> orchestrator.ProxyMessage
+	24, // 28: orchestrator.Orchestrator.Tunnel:input_type -> orchestrator.TunnelData
+	3,  // 29: orchestrator.Orchestrator.ListDevices:output_type -> orchestrator.DeviceList
+	8,  // 30: orchestrator.Orchestrator.AcquireLock:output_type -> orchestrator.AcquireLockResponse
+	11, // 31: orchestrator.Orchestrator.ReleaseLock:output_type -> orchestrator.ReleaseLockResponse
+	13, // 32: orchestrator.Orchestrator.LockHeartbeat:output_type -> orchestrator.LockHeartbeatResponse
+	17, // 33: orchestrator.Orchestrator.ReportDevices:output_type -> orchestrator.ReportDevicesResponse
+	15, // 34: orchestrator.Orchestrator.CheckKey:output_type -> orchestrator.CheckKeyResponse
+	21, // 35: orchestrator.Orchestrator.Session:output_type -> orchestrator.OrchestratorMessage
+	24, // 36: orchestrator.Orchestrator.Tunnel:output_type -> orchestrator.TunnelData
+	29, // [29:37] is the sub-list for method output_type
+	21, // [21:29] is the sub-list for method input_type
 	21, // [21:21] is the sub-list for extension type_name
 	21, // [21:21] is the sub-list for extension extendee
 	0,  // [0:21] is the sub-list for field type_name
@@ -2280,7 +2378,7 @@ func file_proto_orchestrator_orchestrator_proto_init() {
 	if File_proto_orchestrator_orchestrator_proto != nil {
 		return
 	}
-	file_proto_orchestrator_orchestrator_proto_msgTypes[14].OneofWrappers = []any{
+	file_proto_orchestrator_orchestrator_proto_msgTypes[16].OneofWrappers = []any{
 		(*ProxyMessage_Hello)(nil),
 		(*ProxyMessage_Devices)(nil),
 		(*ProxyMessage_LockLog)(nil),
@@ -2288,12 +2386,12 @@ func file_proto_orchestrator_orchestrator_proto_init() {
 		(*ProxyMessage_RelayFailed)(nil),
 		(*ProxyMessage_Event)(nil),
 	}
-	file_proto_orchestrator_orchestrator_proto_msgTypes[17].OneofWrappers = []any{
+	file_proto_orchestrator_orchestrator_proto_msgTypes[19].OneofWrappers = []any{
 		(*OrchestratorMessage_Welcome)(nil),
 		(*OrchestratorMessage_LockExpired)(nil),
 		(*OrchestratorMessage_RelayOpen)(nil),
 	}
-	file_proto_orchestrator_orchestrator_proto_msgTypes[20].OneofWrappers = []any{
+	file_proto_orchestrator_orchestrator_proto_msgTypes[22].OneofWrappers = []any{
 		(*TunnelData_Setup)(nil),
 		(*TunnelData_Data)(nil),
 		(*TunnelData_HalfClose)(nil),
@@ -2305,7 +2403,7 @@ func file_proto_orchestrator_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_orchestrator_orchestrator_proto_rawDesc), len(file_proto_orchestrator_orchestrator_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   26,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
