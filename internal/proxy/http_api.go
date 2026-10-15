@@ -148,6 +148,14 @@ func (a *HTTPApi) tenantKey(r *http.Request) string {
 	return ""
 }
 
+// clientIP is the runner's address as this proxy sees it, without the port.
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAuth(r) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing x-api-key header"})
@@ -219,7 +227,7 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 
 	repo := r.URL.Query().Get("repo")
 	runURL := r.URL.Query().Get("run_url")
-	sp, err := a.scopedPortManager.Acquire(requestedSerials, int32(count), repo, runURL, int32(priority), wifi, sameProxy, a.tenantKey(r))
+	sp, err := a.scopedPortManager.Acquire(requestedSerials, int32(count), repo, runURL, int32(priority), wifi, sameProxy, a.tenantKey(r), clientIP(r))
 	if err != nil {
 		code, msg := httpStatusForAcquireError(err)
 		slog.Error("failed to acquire", "error", err, "status", code, "message", msg)
