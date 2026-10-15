@@ -406,6 +406,13 @@ func (r *CommandRouter) ReportDevices(devices []*pb.DeviceInfo) error {
 	return err
 }
 
+// How often, and how far apart, AcquireLock re-asks after a connection reset:
+// about half a minute, enough for a reconnect or an orchestrator restart.
+var (
+	acquireRetries    = 10
+	acquireRetryDelay = 3 * time.Second
+)
+
 // AcquireLock asks the orchestrator for a lock. Pass serials to request
 // specific devices, or count to request that many arbitrary free devices.
 // Passing neither locks every device in the tenant's pool. priority orders
@@ -429,7 +436,26 @@ func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, de
 	for s := range serials {
 		req.Serials = append(req.Serials, s)
 	}
-	resp, err := r.orchClient.AcquireLock(ctx, req)
+	// A reset of the orchestrator connection ends a queued acquire with
+	// Unavailable although nothing is wrong with the devices (#658 in
+	// sair-orchestrator): ask again once the connection is back. The retry
+	// rejoins the queue at the back of its priority.
+	// ponytail: a reset after the grant but before the reply leaves that lock
+	// orphaned until the orchestrator's 5 min inactivity reaper frees it.
+	var resp *pb.AcquireLockResponse
+	var err error
+	for attempt := 0; ; attempt++ {
+		resp, err = r.orchClient.AcquireLock(ctx, req)
+		if status.Code(err) != codes.Unavailable || attempt == acquireRetries {
+			break
+		}
+		slog.Warn("lock request lost its orchestrator connection; retrying", "attempt", attempt+1, "error", err)
+		select {
+		case <-time.After(acquireRetryDelay):
+		case <-ctx.Done():
+			return nil, err
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
