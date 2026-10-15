@@ -1,7 +1,7 @@
 name: Setup SAIR tools
 description: >-
-  Put sair-acquire, sair-release and sair-wifi on PATH, pinned to the release tag this
-  action is used at (uses: compscidr/sair@vX.Y.Z).
+  Share physical Android devices across CI jobs with sair-acquire/sair-release.
+  Needs an API key from https://sair.run.
 branding:
   icon: smartphone
   color: green
