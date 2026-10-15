@@ -33,6 +33,18 @@ service DeviceSource {
   // unacquired and wakes it afterwards. A no-op below the limit or when the
   // limit is 0.
   rpc RebootIfStale(RebootRequest) returns (RebootResponse) {}
+  // The device source's recent log lines that mention serial, oldest first,
+  // so the proxy can attach them to a lock log when an acquire or a release
+  // reset fails on that device (sair#97).
+  rpc RecentLog(RecentLogRequest) returns (RecentLogResponse) {}
+}
+
+message RecentLogRequest {
+  string serial = 1;
+}
+
+message RecentLogResponse {
+  repeated string lines = 1;
 }
 
 message WakeRequest {

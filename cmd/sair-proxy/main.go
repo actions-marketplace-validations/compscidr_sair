@@ -37,6 +37,7 @@ The SAIR ADB proxy. Takes no arguments; it is configured through env vars:
 func main() {
 	version.HandleArgs(usage)
 	logging.SetLevelFromEnv()
+	logging.KeepRecent()
 	updater.CheckAndUpdate("sair-proxy")
 
 	port := envInt("ADB_PROXY_PORT", 5037)

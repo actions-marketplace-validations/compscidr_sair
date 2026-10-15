@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/compscidr/sair/internal/logging"
 	dspb "github.com/compscidr/sair/proto/devicesource"
 	pb "github.com/compscidr/sair/proto/orchestrator"
 	"google.golang.org/grpc/codes"
@@ -109,6 +111,10 @@ type ScopedPortManager struct {
 	wake func(serial string) error
 	// rebootIfStale is commandRouter.RebootIfStale; tests swap it.
 	rebootIfStale func(serial string) (rebooted bool, uptime time.Duration, err error)
+	// event is commandRouter.Event; tests swap it.
+	event func(e *pb.BenchEvent)
+	// recentSourceLog is commandRouter.RecentDeviceSourceLog; tests swap it.
+	recentSourceLog func(serial string) ([]string, error)
 	// DeviceAPIPort is the proxy's HTTP API port, reverse-forwarded onto each
 	// local phone on acquire so a test can call POST /wifi with the lock's
 	// device token. 0 disables it. The forward lands on the device source's
@@ -152,6 +158,8 @@ func NewScopedPortManager(
 		resetPackages:         commandRouter.ResetPackages,
 		wake:                  commandRouter.Wake,
 		rebootIfStale:         commandRouter.RebootIfStale,
+		event:                 commandRouter.Event,
+		recentSourceLog:       commandRouter.RecentDeviceSourceLog,
 	}
 	commandRouter.waitReset = func(serial string) {
 		mu := m.wifiLock(serial)
@@ -178,10 +186,12 @@ func NewScopedPortManager(
 //
 // With sameProxy, the orchestrator grants every device from a single proxy.
 func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count int32, repo, runURL string, priority int32, wifi, sameProxy bool, tenantKey string) (*ScopedPort, error) {
+	asked := time.Now()
 	result, err := m.commandRouter.AcquireLock(requestedSerials, count, 30, repo, runURL, priority, sameProxy, tenantKey)
 	if err != nil {
 		return nil, err
 	}
+	granted := time.Now()
 	sp, err := m.CreateScopedPort(result.LockID, result.Serials, result.RemoteDevices)
 	if err != nil {
 		// Clean up: release the lock if we can't create the port
@@ -202,19 +212,157 @@ func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count 
 		mu := m.wifiLock(serial)
 		mu.Lock()
 		m.cleanDevice(sp, serial, " (left by an earlier job)")
-		err := m.wake(serial)
+		err := m.wakeDevice(sp.LockID, serial)
 		mu.Unlock()
-		if err != nil && status.Code(err) != codes.Unimplemented && status.Code(err) != codes.NotFound {
-			m.Release(sp.LockID, "error")
+		if wakeFailed(err) {
+			m.acquireFailed(sp, "wake_failed", err, asked, granted)
 			return nil, err
 		}
 	}
 	m.setupDeviceAPI(sp)
 	if err := m.SetWifi(sp.LockID, nil, wifi); err != nil && !wifiUnmanaged(err) {
-		m.Release(sp.LockID, "error")
+		m.acquireFailed(sp, "wifi_failed", err, asked, granted)
 		return nil, err
 	}
+	m.acquireEvents(sp, "granted", nil, asked, granted)
 	return sp, nil
+}
+
+// acquireFailed records why a granted lock could not be handed over, with
+// the logs that led up to it, and releases it.
+func (m *ScopedPortManager) acquireFailed(sp *ScopedPort, outcome string, err error, asked, granted time.Time) {
+	m.acquireEvents(sp, outcome, err, asked, granted)
+	m.logExcerpt(sp, sp.localSerials())
+	m.Release(sp.LockID, "error")
+}
+
+// acquireEvents sends one ACQUIRE event per local device of sp.
+func (m *ScopedPortManager) acquireEvents(sp *ScopedPort, outcome string, err error, asked, granted time.Time) {
+	for _, serial := range sp.localSerials() {
+		m.event(&pb.BenchEvent{
+			Kind: pb.BenchEventKind_BENCH_EVENT_KIND_ACQUIRE, Serial: serial, LockId: sp.LockID, Outcome: outcome, Detail: errText(err),
+			WaitMs: granted.Sub(asked).Milliseconds(), DurationMs: time.Since(granted).Milliseconds(),
+		})
+	}
+}
+
+// localSerials is sp's devices attached to this proxy, sorted.
+func (sp *ScopedPort) localSerials() []string {
+	var out []string
+	for serial := range sp.Serials {
+		if _, remote := sp.RemoteDevices[serial]; !remote {
+			out = append(out, serial)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// maxExcerptLines caps each log excerpt a failure adds to a lock log.
+const maxExcerptLines = 100
+
+// logExcerpt records in sp's lock log the proxy's and the device source's
+// recent log lines about serials, so a failure's context sits next to the
+// red job in the portal (sair#97). Lines are filtered to the lock and its
+// phones: a guest's lock log must not carry the owner's other locks.
+func (m *ScopedPortManager) logExcerpt(sp *ScopedPort, serials []string) {
+	now := time.Now().UnixMilli()
+	add := func(who string, lines []string) {
+		if len(lines) == 0 {
+			return
+		}
+		lines = lines[max(0, len(lines)-maxExcerptLines):]
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: now, Service: "sair: " + who + " log before the failure"})
+		sp.Log.Record(&pb.LockLogEntry{Output: strings.Join(lines, "\n") + "\n"})
+	}
+	add("proxy", logging.Recent.Lines(append([]string{sp.LockID}, serials...)...))
+	for _, serial := range serials {
+		lines, err := m.recentSourceLog(serial)
+		if err != nil {
+			slog.Debug("no device source log for the excerpt", "serial", serial, "error", err)
+			continue
+		}
+		add("device source ("+serial+")", lines)
+	}
+}
+
+// errText is err's message, or "" for nil.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	if st, ok := status.FromError(err); ok {
+		return st.Message()
+	}
+	return err.Error()
+}
+
+// wakeFailed reports whether a Wake error is real, not a relayed device or
+// a device source that predates Wake.
+func wakeFailed(err error) bool {
+	return err != nil && status.Code(err) != codes.Unimplemented && status.Code(err) != codes.NotFound
+}
+
+// wakeDevice is wake plus a WAKE event when it fails.
+func (m *ScopedPortManager) wakeDevice(lockID, serial string) error {
+	err := m.wake(serial)
+	if wakeFailed(err) {
+		m.event(&pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_WAKE, Serial: serial, LockId: lockID, Outcome: "failed", Detail: errText(err)})
+	}
+	return err
+}
+
+var wifiEventKinds = map[dspb.WifiRequest_State]pb.BenchEventKind{
+	dspb.WifiRequest_ON:    pb.BenchEventKind_BENCH_EVENT_KIND_WIFI_ON,
+	dspb.WifiRequest_OFF:   pb.BenchEventKind_BENCH_EVENT_KIND_WIFI_OFF,
+	dspb.WifiRequest_RESET: pb.BenchEventKind_BENCH_EVENT_KIND_WIFI_RESET,
+}
+
+// wifiDevice is setWifi plus its WIFI_* event, on a bench that manages Wi-Fi.
+func (m *ScopedPortManager) wifiDevice(lockID, serial string, state dspb.WifiRequest_State) error {
+	start := time.Now()
+	err := m.setWifi(serial, state)
+	if !wifiUnmanaged(err) {
+		m.event(&pb.BenchEvent{
+			Kind: wifiEventKinds[state], Serial: serial, LockId: lockID, Outcome: wifiOutcome(err), Detail: errText(err),
+			DurationMs: time.Since(start).Milliseconds(),
+		})
+	}
+	return err
+}
+
+// wifiFailures maps the device source's Wi-Fi check messages (wifi.go) to
+// event outcomes, first match wins, so the portal can count failures by
+// cause: a phone that never associates wants moving, one that associates
+// but never validates wants a longer timeout or a better uplink (sair#96).
+// ponytail: matches the device source's text; a typed reason in the status
+// details if these strings start drifting.
+var wifiFailures = []struct{ text, outcome string }{
+	{"not associated to any network", "not_associated"},
+	{"still associated to", "still_associated"},
+	{"associated to", "other_ssid"},
+	{"not VALIDATED", "not_validated"},
+	{"no Wi-Fi network in dumpsys", "not_validated"},
+	{"default network is cellular", "cellular_default"},
+	{"cannot reach", "no_route"},
+	{"still reaches", "still_online"},
+	{"radio is", "radio_off"},
+}
+
+func wifiOutcome(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	msg := errText(err)
+	for _, f := range wifiFailures {
+		if strings.Contains(msg, f.text) {
+			return f.outcome
+		}
+	}
+	if status.Code(err) == codes.DeadlineExceeded {
+		return "timeout"
+	}
+	return "error"
 }
 
 // setupDeviceAPI reverse-forwards the proxy's HTTP API onto every local phone
@@ -285,7 +433,7 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 			mu := m.wifiLock(s)
 			mu.Lock()
 			defer mu.Unlock()
-			errs[i] = m.setWifi(s, state)
+			errs[i] = m.wifiDevice(lockID, s, state)
 		})
 	}
 	wg.Wait()
@@ -323,27 +471,40 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 	// Packages before Wi-Fi: a suggestion a removed app registered for the
 	// bench network goes with the app, so the reset's offline wait is not
 	// spent on a phone that keeps re-joining (sair#76).
-	m.cleanDevice(sp, serial, "")
+	failed := m.cleanDevice(sp, serial, "")
 	// Reboot before the Wi-Fi reset: a fresh boot has nothing to forget, so
 	// the offline wait is not spent twice (sair#93). The serial lock is held
 	// throughout, so the next acquire of this phone waits for the boot.
+	start := time.Now()
 	rebooted, uptime, err := m.rebootIfStale(serial)
+	reboot := &pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_REBOOT, Serial: serial, LockId: lockID, Outcome: "ok"}
 	switch c := status.Code(err); {
 	case err == nil && rebooted:
 		slog.Info("rebooted on release: uptime was over the bench limit", "serial", serial, "lockId", lockID, "uptime", uptime)
 		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: fmt.Sprintf("sair: rebooted after release (uptime %s)", uptime.Round(time.Minute))})
 		m.waitForSource(serial)
+		reboot.Detail = "uptime " + uptime.Round(time.Minute).String()
+		reboot.DurationMs = time.Since(start).Milliseconds()
+		m.event(reboot)
 	case err == nil, c == codes.NotFound, c == codes.Unimplemented:
 	default:
 		slog.Warn("uptime reboot failed; the phone may be mid-boot", "serial", serial, "lockId", lockID, "error", err)
+		reboot.Outcome, reboot.Detail = "failed", errText(err)
+		m.event(reboot)
+		failed = true
 	}
-	if err := m.setWifi(serial, dspb.WifiRequest_RESET); err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound {
+	if err := m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET); err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound {
 		slog.Warn("Wi-Fi reset failed", "serial", serial, "lockId", lockID, "error", err)
+		failed = true
 	}
 	// Awake and unlocked for the next tenant (sair#92). The next acquire
 	// verifies again and fails loudly; this just makes that the rare path.
-	if err := m.wake(serial); err != nil && status.Code(err) != codes.Unimplemented && status.Code(err) != codes.NotFound {
+	if err := m.wakeDevice(lockID, serial); wakeFailed(err) {
 		slog.Warn("wake after release failed; the next acquire of this phone will fail until it is fixed", "serial", serial, "lockId", lockID, "error", err)
+		failed = true
+	}
+	if failed {
+		m.logExcerpt(sp, []string{serial})
 	}
 }
 
@@ -367,21 +528,29 @@ func (m *ScopedPortManager) waitForSource(serial string) {
 // cleanDevice removes a phone's reverse forwards and the packages a job
 // installed, recording what went in sp's lock log with note appended. The
 // caller holds the serial's lock. Runs on release and again on acquire, so
-// a job that never released is cleaned up by the next one.
-func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) {
+// a job that never released is cleaned up by the next one. Returns whether
+// the package reset failed.
+func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) (failed bool) {
 	if err := m.removeReverse(serial); err != nil && status.Code(err) != codes.NotFound {
 		slog.Warn("removing reverse forwards failed", "serial", serial, "lockId", sp.LockID, "error", err)
 	}
 	removed, suggestions, err := m.resetPackages(serial)
+	event := &pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_PACKAGE_RESET, Serial: serial, LockId: sp.LockID, Outcome: "ok"}
 	switch c := status.Code(err); {
 	case err == nil && len(removed) > 0:
 		slog.Info("uninstalled packages a job left behind", "serial", serial, "lockId", sp.LockID, "packages", removed, "suggestionsRemoved", suggestions)
 		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: packagesRemovedService(removed, suggestions) + note})
+		event.Detail = strings.Join(removed, ", ")
+		m.event(event)
 	case err == nil, c == codes.NotFound, c == codes.Unimplemented:
 		// Nothing left behind, a relayed device, or an older device source.
 	default:
 		slog.Warn("package reset failed; a job's APKs may stay on the phone", "serial", serial, "lockId", sp.LockID, "error", err)
+		event.Outcome, event.Detail = "failed", errText(err)
+		m.event(event)
+		return true
 	}
+	return false
 }
 
 // packagesRemovedService is the lock log line for a cleanup, e.g.

@@ -30,7 +30,7 @@ func featuresRequest(t *testing.T, tracker *DeviceListTracker, allowed map[strin
 
 func TestFeaturesRespectVisibilityAndSdk(t *testing.T) {
 	tracker := newTestTracker()
-	tracker.UpdateDevices("src", []*pb.DeviceInfo{
+	tracker.UpdateDevices("src", "", []*pb.DeviceInfo{
 		{Serial: "OLD", Sdk: 17},
 		{Serial: "NEW", Sdk: 34},
 		{Serial: "UNK", Sdk: 0},

@@ -81,7 +81,7 @@ func TestGetSourceAddr(t *testing.T) {
 		{Serial: "DEV_A", Manufacturer: "Samsung", Model: "Galaxy"},
 		{Serial: "DEV_B", Manufacturer: "Google", Model: "Pixel"},
 	}
-	tracker.UpdateDevices("source-a:8080", devices)
+	tracker.UpdateDevices("source-a:8080", "", devices)
 
 	if got := tracker.GetSourceAddr("DEV_A"); got != "source-a:8080" {
 		t.Errorf("GetSourceAddr(DEV_A) = %q, want source-a:8080", got)
@@ -97,10 +97,10 @@ func TestGetSourceAddr(t *testing.T) {
 func TestGetSourceAddrTwoSources(t *testing.T) {
 	tracker := newTestTracker()
 
-	tracker.UpdateDevices("source-a:8080", []*pb.DeviceInfo{
+	tracker.UpdateDevices("source-a:8080", "", []*pb.DeviceInfo{
 		{Serial: "DEV_A"},
 	})
-	tracker.UpdateDevices("source-b:8080", []*pb.DeviceInfo{
+	tracker.UpdateDevices("source-b:8080", "", []*pb.DeviceInfo{
 		{Serial: "DEV_B"},
 	})
 
@@ -115,7 +115,7 @@ func TestGetSourceAddrTwoSources(t *testing.T) {
 func TestSourceAddrClearedWhenDeviceDisappears(t *testing.T) {
 	tracker := newTestTracker()
 
-	tracker.UpdateDevices("source-a:8080", []*pb.DeviceInfo{
+	tracker.UpdateDevices("source-a:8080", "", []*pb.DeviceInfo{
 		{Serial: "DEV_A"},
 		{Serial: "DEV_B"},
 	})
@@ -125,7 +125,7 @@ func TestSourceAddrClearedWhenDeviceDisappears(t *testing.T) {
 	}
 
 	// Device B disappears
-	tracker.UpdateDevices("source-a:8080", []*pb.DeviceInfo{
+	tracker.UpdateDevices("source-a:8080", "", []*pb.DeviceInfo{
 		{Serial: "DEV_A"},
 	})
 

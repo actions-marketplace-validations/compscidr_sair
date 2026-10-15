@@ -355,6 +355,7 @@ func (a *HTTPApi) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 type deviceReport struct {
 	SourceAddr string       `json:"source_addr"`
+	Version    string       `json:"version,omitempty"` // empty from device sources that predate it
 	Devices    []deviceInfo `json:"devices"`
 }
 
@@ -404,7 +405,7 @@ func (a *HTTPApi) handleRegisterDevices(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	a.deviceListTracker.UpdateDevices(report.SourceAddr, pbDevices)
+	a.deviceListTracker.UpdateDevices(report.SourceAddr, report.Version, pbDevices)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

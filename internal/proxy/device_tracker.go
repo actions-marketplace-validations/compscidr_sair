@@ -62,11 +62,17 @@ func (t *DeviceListTracker) Start() {
 	}()
 }
 
-// UpdateDevices is called when a device-source pushes its device list.
-func (t *DeviceListTracker) UpdateDevices(sourceAddr string, devices []*pb.DeviceInfo) {
+// UpdateDevices is called when a device-source pushes its device list. A
+// source that is new, or back after it went stale, is a DEVICE_SOURCE_UP
+// event carrying its version.
+func (t *DeviceListTracker) UpdateDevices(sourceAddr, version string, devices []*pb.DeviceInfo) {
 	t.mu.Lock()
+	_, known := t.sources[sourceAddr]
 	t.sources[sourceAddr] = sourceEntry{devices: devices, lastSeen: time.Now()}
 	t.mu.Unlock()
+	if !known {
+		t.commandRouter.Event(&pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_DEVICE_SOURCE_UP, Outcome: "ok", Detail: sourceAddr + " " + version})
+	}
 
 	t.rebuild()
 }
@@ -157,6 +163,7 @@ func (t *DeviceListTracker) reapAndReport() {
 		if now.Sub(entry.lastSeen) > staleThreshold {
 			slog.Warn("removing stale device source", "addr", addr)
 			delete(t.sources, addr)
+			t.commandRouter.Event(&pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_DEVICE_SOURCE_STALE, Outcome: "failed", Detail: addr})
 		}
 	}
 	t.mu.Unlock()

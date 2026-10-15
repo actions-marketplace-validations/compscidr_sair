@@ -32,7 +32,7 @@ func hostRequest(t *testing.T, tracker *DeviceListTracker, allowed map[string]st
 
 func TestRemoteDevicesAreListedWithOwnerInfoAndFeatures(t *testing.T) {
 	tracker := newTestTracker()
-	tracker.UpdateDevices("src", []*pb.DeviceInfo{{Serial: "LOCAL1", Model: "Pixel 8", Sdk: 34}})
+	tracker.UpdateDevices("src", "", []*pb.DeviceInfo{{Serial: "LOCAL1", Model: "Pixel 8", Sdk: 34}})
 	allowed := map[string]struct{}{"LOCAL1": {}, "REMOTE1": {}}
 	remote := map[string]*pb.DeviceInfo{"REMOTE1": {Serial: "REMOTE1", Model: "Galaxy S24", Manufacturer: "Samsung", Sdk: 17}}
 
