@@ -4,6 +4,32 @@ SAIR lets CI pipelines safely share physical Android devices. It provides
 device locking, ADB protocol translation, and per-runner isolation so multiple
 jobs never collide on the same device.
 
+## GitHub Action
+
+This repo is also a GitHub Action that puts `sair-acquire`, `sair-release` and
+`sair-wifi` on `PATH`. The tools need an orchestrator account: sign up at
+[sair.run](https://sair.run) to get an API key, store it as the repository
+secret `SAIR_API_KEY`, and set the repository variable `SAIR_PROXY_URL` to
+your bench's proxy (see [Run](#run)). Then:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: compscidr/sair@v0.1.18
+  - run: sair-acquire --count 1 > /dev/null
+    env:
+      SAIR_PROXY_URL: ${{ vars.SAIR_PROXY_URL }}
+      SAIR_API_KEY: ${{ secrets.SAIR_API_KEY }}
+  - run: ./gradlew connectedCheck
+  - if: always()
+    run: sair-release --status ${{ job.status }}
+    env:
+      SAIR_API_KEY: ${{ secrets.SAIR_API_KEY }}
+```
+
+The [full workflow example](#example-github-actions-workflow) explains each
+step.
+
 ## Quick Start
 
 ### Install
