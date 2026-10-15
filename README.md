@@ -200,6 +200,15 @@ the device source feeds its commands to `sh` over stdin. A job that runs
 `cmd wifi add-suggestion` itself through the scoped port has the command
 redacted in the device source log and in the lock log.
 
+When an acquire or a release reset fails on a phone, the lock log gets the
+proxy's and the device source's recent log lines about that phone and lock
+(`sair: proxy log before the failure`, and the same for the device source),
+so the failure can be read from the portal without ssh to the bench. Lines
+about the bench's other phones and locks are left out. The proxy also sends
+the orchestrator small events on its session (acquire outcome and wait time,
+Wi-Fi join time or failure cause, packages removed, reboots, versions, a
+device source going stale) for the portal's per-phone view.
+
 ## Architecture
 
 ```

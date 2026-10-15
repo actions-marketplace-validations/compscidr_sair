@@ -52,6 +52,7 @@ The SAIR device source. Takes no arguments; it is configured through env vars:
 func main() {
 	version.HandleArgs(usage)
 	logging.SetLevelFromEnv()
+	logging.KeepRecent()
 	updater.CheckAndUpdate("sair-device-source")
 
 	slog.Info("DeviceSource starting...", "version", version.Version)
@@ -122,6 +123,7 @@ func main() {
 
 type deviceReport struct {
 	SourceAddr string       `json:"source_addr"`
+	Version    string       `json:"version,omitempty"`
 	Devices    []deviceInfo `json:"devices"`
 }
 
@@ -164,6 +166,7 @@ func reportDevices(dsServer *devicesource.Server, proxyAddr, sourceAddr, apiKey 
 
 		body, err := json.Marshal(deviceReport{
 			SourceAddr: sourceAddr,
+			Version:    version.Version,
 			Devices:    infos,
 		})
 		if err != nil {

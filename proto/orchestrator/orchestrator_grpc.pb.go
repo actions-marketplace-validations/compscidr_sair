@@ -38,7 +38,7 @@ type OrchestratorClient interface {
 	LockHeartbeat(ctx context.Context, in *LockHeartbeatRequest, opts ...grpc.CallOption) (*LockHeartbeatResponse, error)
 	ReportDevices(ctx context.Context, in *ReportDevicesRequest, opts ...grpc.CallOption) (*ReportDevicesResponse, error)
 	// One long-lived stream per proxy: version and identity first, then device
-	// reports, lock heartbeats and lock log entries; the orchestrator pushes
+	// reports, lock heartbeats, lock log entries and bench events; the orchestrator pushes
 	// lock expiry back. Replaces the periodic unary calls for proxies that use it.
 	Session(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ProxyMessage, OrchestratorMessage], error)
 	// One relayed ADB connection between the proxy holding a lock (HOLDER) and the
@@ -141,7 +141,7 @@ type OrchestratorServer interface {
 	LockHeartbeat(context.Context, *LockHeartbeatRequest) (*LockHeartbeatResponse, error)
 	ReportDevices(context.Context, *ReportDevicesRequest) (*ReportDevicesResponse, error)
 	// One long-lived stream per proxy: version and identity first, then device
-	// reports, lock heartbeats and lock log entries; the orchestrator pushes
+	// reports, lock heartbeats, lock log entries and bench events; the orchestrator pushes
 	// lock expiry back. Replaces the periodic unary calls for proxies that use it.
 	Session(grpc.BidiStreamingServer[ProxyMessage, OrchestratorMessage]) error
 	// One relayed ADB connection between the proxy holding a lock (HOLDER) and the

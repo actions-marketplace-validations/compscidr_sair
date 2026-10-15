@@ -118,7 +118,7 @@ func TestAdbReverseThroughScopedPort(t *testing.T) {
 	t.Cleanup(srv.Stop)
 
 	tracker := newTestTracker()
-	tracker.UpdateDevices("passthrough:///bufconn-ds", []*pb.DeviceInfo{{Serial: "SER"}})
+	tracker.UpdateDevices("passthrough:///bufconn-ds", "", []*pb.DeviceInfo{{Serial: "SER"}})
 	r := &CommandRouter{
 		dsDialer:      func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) },
 		ResolveSource: tracker.GetSourceAddr,
@@ -185,7 +185,7 @@ func TestLocalTunnelSendsTheServiceAsInitialCommand(t *testing.T) {
 	ds := &fakeDeviceSource{endsFirst: true}
 	addr, dial := startFakeDeviceSource(t, ds)
 	tracker := newTestTracker()
-	tracker.UpdateDevices(addr, []*pb.DeviceInfo{{Serial: "SER"}})
+	tracker.UpdateDevices(addr, "", []*pb.DeviceInfo{{Serial: "SER"}})
 	r := &CommandRouter{dsDialer: dial}
 
 	client, server := tcpPair(t)
@@ -212,7 +212,7 @@ func TestStaleSourceReapKeepsLiveForward(t *testing.T) {
 	addr, dial := startFakeDeviceSource(t, ds)
 	r := &CommandRouter{dsDialer: dial, orchClient: startFakeOrchestrator(t, &fakeSessionServer{})}
 	tracker := NewDeviceListTracker(r)
-	tracker.UpdateDevices(addr, []*pb.DeviceInfo{{Serial: "SER"}})
+	tracker.UpdateDevices(addr, "", []*pb.DeviceInfo{{Serial: "SER"}})
 
 	client, server := tcpPair(t)
 	c := NewAdbConnection(server, r, tracker, nil, nil, nil)

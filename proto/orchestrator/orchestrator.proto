@@ -11,7 +11,7 @@ service Orchestrator {
   rpc LockHeartbeat(LockHeartbeatRequest) returns (LockHeartbeatResponse) {}
   rpc ReportDevices(ReportDevicesRequest) returns (ReportDevicesResponse) {}
   // One long-lived stream per proxy: version and identity first, then device
-  // reports, lock heartbeats and lock log entries; the orchestrator pushes
+  // reports, lock heartbeats, lock log entries and bench events; the orchestrator pushes
   // lock expiry back. Replaces the periodic unary calls for proxies that use it.
   rpc Session(stream ProxyMessage) returns (stream OrchestratorMessage) {}
   // One relayed ADB connection between the proxy holding a lock (HOLDER) and the
@@ -159,6 +159,7 @@ message ProxyMessage {
     LockLog lock_log = 3;
     LockHeartbeatRequest heartbeat = 4; // its log field is left empty on the stream
     RelayFailed relay_failed = 5;
+    BenchEvent event = 6;
   }
 }
 
@@ -241,4 +242,40 @@ message RelayOpen {
 message RelayFailed {
   string tunnel_id = 1;
   string error = 2;
+}
+
+// Proxy -> orchestrator: something that happened on the bench, for debugging
+// it without ssh (sair#97). Best effort: queued while the session is down,
+// dropped past a bound. Orchestrators that predate it ignore it.
+message BenchEvent {
+  int64 timestamp_ms = 1;
+  BenchEventKind kind = 2;
+  string serial = 3;  // empty for bench-wide events (PROXY_START, DEVICE_SOURCE_*)
+  string lock_id = 4; // the lock it happened under; empty outside one
+  // "ok", or a short failure word. ACQUIRE: granted, wifi_failed,
+  // wake_failed, error. WIFI_*: not_associated, other_ssid, not_validated,
+  // cellular_default, ping_failed, radio_off, still_associated,
+  // still_online, timeout, error. PACKAGE_RESET, WAKE, REBOOT: failed.
+  // PROXY_START: updated when the auto-updater just replaced the binary.
+  string outcome = 5;
+  // Human text: the error, the packages removed, the version.
+  string detail = 6;
+  // ACQUIRE: grant to ready (Wi-Fi, wake). WIFI_*, REBOOT: how long it took.
+  int64 duration_ms = 7;
+  // ACQUIRE only: request to grant.
+  int64 wait_ms = 8;
+}
+
+enum BenchEventKind {
+  BENCH_EVENT_KIND_UNSPECIFIED = 0;
+  BENCH_EVENT_KIND_ACQUIRE = 1;       // one per local device of a granted lock
+  BENCH_EVENT_KIND_WIFI_ON = 2;
+  BENCH_EVENT_KIND_WIFI_OFF = 3;
+  BENCH_EVENT_KIND_WIFI_RESET = 4;    // on release
+  BENCH_EVENT_KIND_PACKAGE_RESET = 5; // detail lists what was uninstalled
+  BENCH_EVENT_KIND_WAKE = 6;          // failures only
+  BENCH_EVENT_KIND_REBOOT = 7;        // uptime reboot on release, or its failure
+  BENCH_EVENT_KIND_PROXY_START = 8;   // detail is the proxy version
+  BENCH_EVENT_KIND_DEVICE_SOURCE_UP = 9;     // new or back after stale; detail: address and version
+  BENCH_EVENT_KIND_DEVICE_SOURCE_STALE = 10; // stopped reporting; detail: address
 }

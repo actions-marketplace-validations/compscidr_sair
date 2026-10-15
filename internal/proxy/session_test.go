@@ -591,7 +591,7 @@ func TestDeviceTrackerReportNowSendsCurrentList(t *testing.T) {
 	f := newFakeSessionServer()
 	r := newRouterWithSession(t, f)
 	tr := NewDeviceListTracker(r)
-	tr.UpdateDevices("10.0.0.5:8080", []*pb.DeviceInfo{{Serial: "DEV7"}})
+	tr.UpdateDevices("10.0.0.5:8080", "", []*pb.DeviceInfo{{Serial: "DEV7"}})
 	tr.ReportNow()
 	waitFor(t, "devices on stream", func() bool {
 		msgs, _ := f.snapshot()

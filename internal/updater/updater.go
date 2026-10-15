@@ -27,6 +27,10 @@ type releaseInfo struct {
 
 const maxBinarySize = 100 << 20 // 100 MB
 
+// Updated is true in a process the auto-updater just restarted into, so the
+// proxy can say so in its start event (sair#97).
+var Updated bool
+
 // CheckAndUpdate checks GitHub for a newer release and self-updates if found.
 // It is a no-op for dev builds or when SAIR_AUTO_UPDATE=false.
 // On success it re-execs the new binary (never returns).
@@ -39,6 +43,7 @@ func CheckAndUpdate(binaryName string) {
 	}
 	if os.Getenv("SAIR_JUST_UPDATED") == "1" {
 		os.Unsetenv("SAIR_JUST_UPDATED")
+		Updated = true
 		return
 	}
 

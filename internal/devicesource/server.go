@@ -599,3 +599,12 @@ func readAdbOkay(conn net.Conn) error {
 	}
 	return nil
 }
+
+// RecentLog returns this process's recent log lines about one device, for
+// the proxy to attach to a lock log when an acquire or reset fails on it.
+func (s *Server) RecentLog(_ context.Context, req *pb.RecentLogRequest) (*pb.RecentLogResponse, error) {
+	if err := s.checkSerial(req.Serial); err != nil {
+		return nil, err
+	}
+	return &pb.RecentLogResponse{Lines: logging.Recent.Lines(req.Serial)}, nil
+}

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/compscidr/sair/internal/updater"
 	dspb "github.com/compscidr/sair/proto/devicesource"
 	pb "github.com/compscidr/sair/proto/orchestrator"
 	"google.golang.org/grpc"
@@ -53,6 +55,10 @@ type CommandRouter struct {
 	// waitReset blocks while a released lock's reset still runs on serial.
 	// Set by NewScopedPortManager, which owns the per-serial lock.
 	waitReset func(serial string)
+
+	// events queues bench events for the session (see Event); nil until
+	// StartSession, which drops them.
+	events chan *pb.BenchEvent
 
 	// Device-source connections, created lazily when sources register
 	dsMu    sync.Mutex
@@ -322,6 +328,29 @@ func (r *CommandRouter) Wake(serial string) error {
 	return err
 }
 
+// RecentDeviceSourceLog returns the device source's recent log lines about
+// a local device, for a failure's lock log excerpt.
+func (r *CommandRouter) RecentDeviceSourceLog(serial string) ([]string, error) {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return nil, status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := client.RecentLog(ctx, &dspb.RecentLogRequest{Serial: serial})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Lines, nil
+}
+
 // RebootIfStale reboots a local device whose uptime is over the device
 // source's limit and returns once it is back (sair#93). NotFound for a device
 // this proxy has no source for; Unimplemented from an older device source.
@@ -531,7 +560,52 @@ func (r *CommandRouter) SendLockLog(lockID string, entries []*pb.LockLogEntry) e
 // orchestrator wants this proxy to serve a relayed connection.
 func (r *CommandRouter) StartSession(version string, heartbeatIntervalS int64, onExpired func(lockID string), onConnected func(), onRelayOpen func(*pb.RelayOpen)) {
 	r.sess = newSession(r.orchClient, r.apiKey, r.proxyID, version, heartbeatIntervalS, onExpired, onConnected, onRelayOpen)
+	r.events = make(chan *pb.BenchEvent, maxQueuedEvents)
+	go r.sendEvents()
 	r.sess.start()
+	start := &pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_PROXY_START, Outcome: "ok", Detail: version}
+	if updater.Updated {
+		start.Outcome = "updated"
+	}
+	r.Event(start)
+}
+
+// maxQueuedEvents bounds the bench events kept while the session is down.
+const maxQueuedEvents = 256
+
+// Event queues a bench event for the orchestrator (sair#97). Never blocks:
+// past maxQueuedEvents, or before StartSession, the event is dropped.
+func (r *CommandRouter) Event(e *pb.BenchEvent) {
+	if r == nil {
+		return
+	}
+	if e.TimestampMs == 0 {
+		e.TimestampMs = time.Now().UnixMilli()
+	}
+	select {
+	case r.events <- e:
+	default:
+		slog.Debug("bench event dropped", "kind", e.Kind, "serial", e.Serial)
+	}
+}
+
+// sendEvents ships queued events in order, waiting out a session that is
+// down. Against an orchestrator without Session there is nowhere to send
+// them; they are dropped.
+func (r *CommandRouter) sendEvents() {
+	for e := range r.events {
+		for !r.sess.unaryFallback() {
+			err := r.sess.send(&pb.ProxyMessage{Msg: &pb.ProxyMessage_Event{Event: e}})
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, errSessionDown) {
+				slog.Debug("bench event not sent", "kind", e.Kind, "error", err)
+				break
+			}
+			time.Sleep(time.Second)
+		}
+	}
 }
 
 // sessionUp reports whether periodic traffic should go on the stream.
