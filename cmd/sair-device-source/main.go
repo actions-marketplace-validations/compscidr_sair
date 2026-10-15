@@ -136,6 +136,8 @@ type deviceInfo struct {
 	AccountTypes []string `json:"account_types,omitempty"`
 	LastRebootMs int64    `json:"last_reboot_ms,omitempty"`
 	Warning      string   `json:"warning,omitempty"`
+	// Same JSON as the proxy's orchestrator WifiStats: one message, two packages.
+	Wifi *pb.WifiStats `json:"wifi,omitempty"`
 }
 
 func reportDevices(dsServer *devicesource.Server, proxyAddr, sourceAddr, apiKey string, stop chan struct{}) {
@@ -161,6 +163,7 @@ func reportDevices(dsServer *devicesource.Server, proxyAddr, sourceAddr, apiKey 
 				AccountTypes: d.AccountTypes,
 				LastRebootMs: d.LastRebootMs,
 				Warning:      d.Warning,
+				Wifi:         d.Wifi,
 			})
 		}
 

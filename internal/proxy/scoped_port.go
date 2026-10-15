@@ -344,7 +344,7 @@ var wifiFailures = []struct{ text, outcome string }{
 	{"not VALIDATED", "not_validated"},
 	{"no Wi-Fi network in dumpsys", "not_validated"},
 	{"default network is cellular", "cellular_default"},
-	{"cannot reach", "ping_failed"},
+	{"cannot reach", "no_route"},
 	{"still reaches", "still_online"},
 	{"radio is", "radio_off"},
 }

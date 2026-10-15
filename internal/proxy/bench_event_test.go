@@ -65,7 +65,7 @@ func TestWifiOutcome(t *testing.T) {
 	for msg, want := range map[string]string{
 		`A not online on Wi-Fi "bench" within 1m0s: associated to "guest", not "bench"`: "other_ssid",
 		`A not online on Wi-Fi "bench" within 1m0s: connected but not VALIDATED`:         "not_validated",
-		`A not online on Wi-Fi "bench" within 1m0s: cannot reach 8.8.8.8 (DNS or route)`: "ping_failed",
+		`A not online on Wi-Fi "bench" within 1m0s: cannot reach 8.8.8.8 (DNS or route)`: "no_route",
 		`A not offline within 20s: still associated to "bench"`:                          "still_associated",
 		`A not offline within 20s: still reaches 8.8.8.8 (mobile data?)`:                 "still_online",
 		`A not online within 1m0s: cmd wifi status: exit status 1`:                       "timeout",

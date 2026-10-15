@@ -53,6 +53,32 @@ message DeviceInfo {
   // Why the device is not ready for a job, for the bench owner: a keyguard
   // sair could not dismiss, with what to do about it. Empty when fine.
   string warning = 9;
+  // Wi-Fi join outcomes; unset before the first ON, or from device sources
+  // that predate the field.
+  WifiStats wifi = 10;
+}
+
+// How often a phone met the Wi-Fi ON contract (sair#96), since the device
+// source started, so a bench owner sees a marginal phone as one number
+// rather than a series of red jobs.
+message WifiStats {
+  // ON attempts, and how many did not get online.
+  int32 joins = 1;
+  int32 failures = 2;
+  // Failures by the last reason the phone was not online: not_associated,
+  // other_ssid, not_validated, no_route, other.
+  map<string, int32> failures_by_reason = 3;
+  // The latest failure's message and when it happened, unix ms.
+  string last_failure = 4;
+  int64 last_failure_ms = 5;
+  // Time to online of successful joins: the latest, the median of the
+  // latest 100, and the slowest; and the limit (WIFI_CONNECT_TIMEOUT_SECONDS).
+  int64 last_join_ms = 6;
+  int64 median_join_ms = 7;
+  int64 slowest_join_ms = 8;
+  int64 timeout_ms = 9;
+  // What a bench owner could do about it, empty when nothing stands out.
+  string hint = 10;
 }
 
 // A lock request either names the devices it wants (serials) or asks for a
@@ -254,7 +280,7 @@ message BenchEvent {
   string lock_id = 4; // the lock it happened under; empty outside one
   // "ok", or a short failure word. ACQUIRE: granted, wifi_failed,
   // wake_failed, error. WIFI_*: not_associated, other_ssid, not_validated,
-  // cellular_default, ping_failed, radio_off, still_associated,
+  // cellular_default, no_route, radio_off, still_associated,
   // still_online, timeout, error. PACKAGE_RESET, WAKE, REBOOT: failed.
   // PROXY_START: updated when the auto-updater just replaced the binary.
   string outcome = 5;

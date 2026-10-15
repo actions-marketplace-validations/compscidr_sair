@@ -106,6 +106,31 @@ message Device {
   // Why the device is not ready for a job, for a bench owner to act on:
   // currently a keyguard sair could not dismiss. Empty when fine.
   string warning = 8;
+  // Wi-Fi join outcomes; unset before the first ON.
+  WifiStats wifi = 9;
+}
+
+// How often a phone met the Wi-Fi ON contract (sair#96), since the device
+// source started, so a bench owner sees a marginal phone as one number
+// rather than a series of red jobs.
+message WifiStats {
+  // ON attempts, and how many did not get online.
+  int32 joins = 1;
+  int32 failures = 2;
+  // Failures by the last reason the phone was not online: not_associated,
+  // other_ssid, not_validated, no_route, other.
+  map<string, int32> failures_by_reason = 3;
+  // The latest failure's message and when it happened, unix ms.
+  string last_failure = 4;
+  int64 last_failure_ms = 5;
+  // Time to online of successful joins: the latest, the median of the
+  // latest 100, and the slowest; and the limit (WIFI_CONNECT_TIMEOUT_SECONDS).
+  int64 last_join_ms = 6;
+  int64 median_join_ms = 7;
+  int64 slowest_join_ms = 8;
+  int64 timeout_ms = 9;
+  // What a bench owner could do about it, empty when nothing stands out.
+  string hint = 10;
 }
 
 message Command {

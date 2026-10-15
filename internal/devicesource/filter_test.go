@@ -2,9 +2,13 @@ package devicesource
 
 import (
 	"context"
+	"log/slog"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
+	"github.com/compscidr/sair/internal/logging"
 	pb "github.com/compscidr/sair/proto/devicesource"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -100,5 +104,24 @@ func TestDeviceInfoReadsBuildPropsOncePerAttachment(t *testing.T) {
 	cmds = fakeShell(s, map[string]string{props: "Pixel\ngoogle\n15\n35\n"}, "dumpsys")
 	if d, _ := s.getDeviceInfo("NEW"); d.Model != "Pixel" {
 		t.Errorf("failed read was cached: %+v", d)
+	}
+}
+
+// RecentLog hands out a phone's own lines only, and nothing for a phone the
+// filter excludes: the proxy must not be able to pull another phone's log.
+func TestRecentLogFiltersBySerial(t *testing.T) {
+	logging.KeepRecent()
+	slog.Info("SetWifi", "serial", "DEV2", "state", "ON")
+	slog.Info("SetWifi", "serial", "DEV3", "state", "ON")
+	s := &Server{deny: packageSet([]string{"DEV1"})}
+	resp, err := s.RecentLog(context.Background(), &pb.RecentLogRequest{Serial: "DEV2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Lines) == 0 || slices.ContainsFunc(resp.Lines, func(l string) bool { return !strings.Contains(l, "DEV2") }) {
+		t.Errorf("lines for DEV2 = %q", resp.Lines)
+	}
+	if _, err := s.RecentLog(context.Background(), &pb.RecentLogRequest{Serial: "DEV1"}); status.Code(err) != codes.NotFound {
+		t.Errorf("excluded serial: err = %v, want NotFound", err)
 	}
 }

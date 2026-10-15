@@ -70,6 +70,8 @@ installs all binaries to `~/.local/bin`.
 
 - `adb` installed on the machine with Android devices
 - One or more Android devices connected via USB with USB debugging enabled
+  (don't sign them in to a personal account: see
+  [Securing a bench](#securing-a-bench))
 
 ### Run
 
@@ -181,6 +183,14 @@ Direct group, still counts as offline. Each wait is bounded
 timeout says which part failed, e.g. `associated to "Cafe", not "bench"`,
 `connected but not VALIDATED`, or `still associated to "bench"`. Mobile data
 is not managed: a phone with a SIM is never offline by this definition.
+
+The device source counts each phone's Wi-Fi on attempts since it started:
+failures by reason (`not_associated`, `other_ssid`, `not_validated`,
+`no_route`, `other`), the last failure, and the latest, median and slowest
+time to online. The proxy's `/status` lists them per phone as `wifi`, with a
+`hint` when the slowest join comes near `WIFI_CONNECT_TIMEOUT_SECONDS` (raise
+it) or most failures never associated (move the phone or the AP). A phone that
+fails one join in ten, after at least five, is also logged as a warning.
 
 A suggestion for the bench network registered by a test app's own uid is not
 sair's to remove, but the app is: the package reset on release uninstalls it,
@@ -346,7 +356,8 @@ proxy's own config, which only someone with access to that machine can edit.
 Putting an account's key there says "this account may use these phones", so
 nothing has to be marked shared in the portal. The devices stay out of
 the public pool, and a guest can still lock them. The two mechanisms are
-independent:
+independent. Either way the holder can use any account signed in on the
+phone, not just the test APK (see [Securing a bench](#securing-a-bench)):
 
 | | Guest key on the proxy | Shared in the portal |
 |---|---|---|
@@ -489,6 +500,30 @@ them). The serial is required with a device token: the proxy cannot tell which
 phone a reverse-forwarded connection came from. Devices relayed from another
 proxy get no token access; their Wi-Fi is not managed at all. The forward is
 removed with the lock, like every other `adb reverse` a job leaves behind.
+
+## Securing a bench
+
+A job holding a lock has full `adb shell` and instrumentation access to the
+phone. Through UI automation that is enough to use any app the phone is signed
+in to: mail, the browser's signed-in sessions, the Play Store. The proxy can't
+filter this reliably, because a legitimate UiAutomator test does the same
+things. **Whatever account is signed in on a bench phone is usable by anyone
+who can lock it:** your own CI jobs, every key in `SAIR_GUEST_API_KEYS`, and
+every SAIR account if the phone is shared in the portal.
+
+- **Do the phones need an account at all?** adb installs, instrumentation,
+  BLE, Wi-Fi Direct and Nearby Connections all work without one. The usual
+  reasons to sign in are Play Store installs and Google Sign-In tests. If
+  you don't need those, leave the phones signed out.
+- **If they do, use a dedicated bench account, never a person's.** No payment
+  method, Play purchases set to always require authentication, no real mail
+  or contacts, and account recovery pointed at an alias. Assume anyone who
+  can lock the phone can use the account.
+- **A secondary Android user or work profile is not an isolation boundary.**
+  The shell user can act across users, so don't rely on one to hide an
+  account.
+- **Guest keys and portal sharing hand out the whole phone,** not just the
+  test APK. The holder can use whatever is signed in.
 
 ## Deployment
 
