@@ -61,6 +61,8 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			io.WriteString(w, `{"status":"passed","id":"R1"}`)
 		}
+	case r.URL.Path == "/api/v1/devices":
+		io.WriteString(w, `{"devices":[{"serial":"B1","model":"Pixel 8","sdk":34,"shared":false,"in_use":false}]}`)
 	case r.Method == "POST" && r.URL.Path == "/api/v1/leases":
 		w.WriteHeader(201)
 		io.WriteString(w, `{"status":"active","id":"L1","device":"B1","shared":true}`)
@@ -166,6 +168,9 @@ func TestRunTestsUploadsBothAPKsAndWaitsForTheResult(t *testing.T) {
 
 func TestLeaseInstallShellScreenshotLogcatRelease(t *testing.T) {
 	cs, api := connect(t, "k")
+	if got := textOf(t, call(t, cs, "list_devices", nil)); !strings.Contains(got, `"serial":"B1"`) {
+		t.Fatalf("list_devices = %s", got)
+	}
 	if got := textOf(t, call(t, cs, "lease_device", nil)); !strings.Contains(got, `"id":"L1"`) {
 		t.Fatalf("lease_device = %s", got)
 	}

@@ -49,6 +49,11 @@ func (c *Client) Run(ctx context.Context, id string) ([]byte, error) {
 	return c.do(ctx, http.MethodGet, "/api/v1/runs/"+url.PathEscape(id), nil, "")
 }
 
+// Devices lists the phones this key may run on or lease: serial, model, sdk, shared, in_use.
+func (c *Client) Devices(ctx context.Context) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, "/api/v1/devices", nil, "")
+}
+
 // TakeLease takes a device, waiting up to waitS seconds for one (0: the server's default).
 func (c *Client) TakeLease(ctx context.Context, serial string, waitS int) ([]byte, error) {
 	fields := url.Values{}

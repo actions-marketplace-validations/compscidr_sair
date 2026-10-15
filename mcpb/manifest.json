@@ -30,6 +30,7 @@
   "compatibility": { "platforms": ["darwin", "linux"] },
   "tools": [
     { "name": "run_tests", "description": "Run an app's instrumented tests on a real phone and return per-test results" },
+    { "name": "list_devices", "description": "List the phones this API key may use (serial, model, API level, shared, in use)" },
     { "name": "lease_device", "description": "Take a real phone for several calls" },
     { "name": "install_apk", "description": "Install an APK on the leased phone" },
     { "name": "shell", "description": "Run a shell command on the leased phone" },

@@ -81,6 +81,7 @@ or any client's JSON config:
 | Tool | Does |
 |------|------|
 | `run_tests` | Uploads `app_apk` and `test_apk` (paths on the agent's machine), waits for the run, returns per-test results, instrument output and a logcat tail |
+| `list_devices` | Lists the phones the key may use: serial, model, `sdk` (API level), shared, in use |
 | `lease_device` | Takes a phone (`serial`, `wait_s` optional) and returns the lease id |
 | `install_apk` | Installs an APK on the leased phone, returns its package |
 | `shell` | Runs a command, returns output and exit code |

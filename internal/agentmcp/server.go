@@ -25,12 +25,12 @@ type runTestsIn struct {
 	AppAPK          string `json:"app_apk" jsonschema:"path to the app APK on this machine"`
 	TestAPK         string `json:"test_apk" jsonschema:"path to the instrumentation test APK on this machine"`
 	Instrumentation string `json:"instrumentation,omitempty" jsonschema:"pkg/runner to run, e.g. com.example.test/androidx.test.runner.AndroidJUnitRunner; needed only when the test APK declares several"`
-	Serial          string `json:"serial,omitempty" jsonschema:"a specific device; otherwise any one the API key may use"`
+	Serial          string `json:"serial,omitempty" jsonschema:"a specific device from list_devices; otherwise any one the API key may use"`
 	TimeoutS        int    `json:"timeout_s,omitempty" jsonschema:"seconds before the run is stopped (1-3600, default 900)"`
 }
 
 type leaseIn struct {
-	Serial string `json:"serial,omitempty" jsonschema:"a specific device; otherwise any one the API key may use"`
+	Serial string `json:"serial,omitempty" jsonschema:"a specific device from list_devices; otherwise any one the API key may use"`
 	WaitS  int    `json:"wait_s,omitempty" jsonschema:"seconds to wait for a free device (1-120, default 30)"`
 }
 
@@ -95,6 +95,14 @@ func NewServer(c *agentapi.Client, version string) *mcp.Server {
 			case <-time.After(pollInterval):
 			}
 		}
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "list_devices",
+		Description: "List the real Android phones this API key may use, with serial, manufacturer, model, sdk (API level), " +
+			"whether the phone is shared by another user and whether it is in use now. Pass a serial to run_tests or lease_device to pick one.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		return reply(c.Devices(ctx))
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
