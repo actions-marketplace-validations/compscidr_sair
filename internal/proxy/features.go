@@ -2,7 +2,7 @@ package proxy
 
 import "strings"
 
-// modernSdk is assumed when a device's API level is unknown (0).
+// modernSdk is assumed when no device is visible to describe.
 const modernSdk = 36
 
 // FeaturesForSdk builds the host:features reply for a device at the given API
@@ -11,6 +11,11 @@ const modernSdk = 36
 // gained each feature. Advertising a feature the device lacks makes adb use a
 // protocol the device closes on: shell_v2 on an API 17 phone loops forever in
 // "- waiting for device -".
+//
+// An unknown level (0: the device-source has not read the phone's build props
+// yet) gets the legacy set, which every device speaks. Assuming modern there
+// hung CI on an API 17 phone: adb fetches features once per command, so one
+// answer given before the props read landed looped that command for good.
 //
 // abb_exec matters for installs: without it adb streams an APK into
 // `exec:cmd package install`, a cmd process on the phone, which on some
@@ -22,9 +27,6 @@ const modernSdk = 36
 // but is not offered it just keeps the cmd path. abb (interactive) is still
 // left out: nothing needs it.
 func FeaturesForSdk(sdk int32) string {
-	if sdk <= 0 {
-		sdk = modernSdk
-	}
 	features := []string{"openscreen_mdns"} // host-side, device-independent
 	if sdk >= 24 {
 		features = append(features, "shell_v2", "cmd")

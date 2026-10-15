@@ -38,7 +38,7 @@ func TestFeaturesForSdk(t *testing.T) {
 	if has(full, "abb") {
 		t.Error("must never advertise abb")
 	}
-	if FeaturesForSdk(0) != FeaturesForSdk(modernSdk) {
-		t.Error("unknown API level should get the modern set")
+	if FeaturesForSdk(0) != FeaturesForSdk(17) {
+		t.Error("unknown API level should get the legacy set")
 	}
 }
