@@ -45,9 +45,12 @@ func TestFeaturesRespectVisibilityAndSdk(t *testing.T) {
 	if r := featuresRequest(t, tracker, onlyOld, "host-serial:NEW:features"); !strings.HasPrefix(r, "FAIL") {
 		t.Errorf("NEW is not visible on this connection, want FAIL, got %q", r)
 	}
-	// Unknown API level is treated as modern.
-	if r := featuresRequest(t, tracker, map[string]struct{}{"UNK": {}}, "host-serial:UNK:features"); !strings.Contains(r, "shell_v2") {
-		t.Errorf("unknown sdk should get the modern set, got %q", r)
+	// Unknown API level (props not read yet) is treated as legacy.
+	if r := featuresRequest(t, tracker, map[string]struct{}{"UNK": {}}, "host-serial:UNK:features"); !strings.HasPrefix(r, "OKAY") || strings.Contains(r, "shell_v2") {
+		t.Errorf("unknown sdk should get the legacy set, got %q", r)
+	}
+	if r := featuresRequest(t, tracker, map[string]struct{}{"NEW": {}, "UNK": {}}, "host:features"); strings.Contains(r, "shell_v2") {
+		t.Errorf("host:features with an unknown-sdk device visible must not advertise shell_v2, got %q", r)
 	}
 	// host:features uses the lowest visible level.
 	both := map[string]struct{}{"OLD": {}, "NEW": {}}

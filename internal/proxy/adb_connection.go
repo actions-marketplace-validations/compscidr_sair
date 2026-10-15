@@ -126,15 +126,12 @@ func (c *AdbConnection) Handle() {
 	}
 }
 
-// sdkOf returns the API level the device-source reported for serial, or
-// modernSdk when the device is not visible on this connection or its level
-// is unknown, so such a device gets the full feature set.
+// sdkOf returns the API level the device-source reported for serial (0 when
+// unknown, which gets the legacy feature set), or modernSdk when the device is
+// not visible on this connection.
 func (c *AdbConnection) sdkOf(serial string) int32 {
 	for _, d := range c.getVisibleDevices() {
 		if d.Serial == serial {
-			if d.Sdk <= 0 {
-				return modernSdk
-			}
 			return d.Sdk
 		}
 	}
@@ -143,10 +140,11 @@ func (c *AdbConnection) sdkOf(serial string) int32 {
 
 // minVisibleSdk is the lowest API level among the devices this connection can
 // see: host:features has no serial, so the answer must hold for all of them.
+// An unknown level (0) counts as the lowest.
 func (c *AdbConnection) minVisibleSdk() int32 {
 	min := int32(modernSdk)
 	for _, d := range c.getVisibleDevices() {
-		if d.Sdk > 0 && d.Sdk < min {
+		if d.Sdk < min {
 			min = d.Sdk
 		}
 	}
