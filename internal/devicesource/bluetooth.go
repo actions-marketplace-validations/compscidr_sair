@@ -160,7 +160,10 @@ func (s *Server) checkBluetooth(ctx context.Context, serial string, states ...st
 //
 //	Bluetooth Status
 //	  enabled: true
-//	  state: ON                (One UI, Android 14 and 16)
+//	  state: ON                (One UI, Android 14 and 16; AOSP Android 15)
+//
+//	Bluetooth Status:
+//	  State:         ON        (Pixel, Android 16 and 17)
 //
 // A phone without the service at all ("Can't find service") is "" too.
 func (s *Server) bluetoothState(ctx context.Context, serial string) (string, error) {
@@ -172,8 +175,8 @@ func (s *Server) bluetoothState(ctx context.Context, serial string) (string, err
 		return "", fmt.Errorf("dumpsys bluetooth_manager: %w", err)
 	}
 	for _, line := range strings.Split(out, "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "state:"); ok {
-			return strings.TrimPrefix(strings.TrimSpace(v), "STATE_"), nil
+		if t := strings.TrimSpace(line); len(t) > 6 && strings.EqualFold(t[:6], "state:") {
+			return strings.TrimPrefix(strings.TrimSpace(t[6:]), "STATE_"), nil
 		}
 	}
 	return "", nil

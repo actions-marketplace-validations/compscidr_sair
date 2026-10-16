@@ -178,3 +178,17 @@ func TestBleApps(t *testing.T) {
 		}
 	}
 }
+
+// The adapter state in every dump format seen on a bench phone.
+func TestBluetoothStateFormats(t *testing.T) {
+	for _, tc := range []struct{ name, out, want string }{
+		{"one ui / aosp", "Bluetooth Status\n  enabled: true\n  state: BLE_ON\n", "BLE_ON"},
+		{"pixel 16/17", "Bluetooth Status:\n  State:         ON\n  Address:       XX:XX:XX:XX:7E:97\n\nBluetooth Activity History:\n  TIMESTAMP          ACTION/STATE     DETAILS\n", "ON"},
+		{"android 4.x", "", ""},
+	} {
+		s := &Server{shell: func(context.Context, string, string) (string, error) { return tc.out, nil }}
+		if got, err := s.bluetoothState(context.Background(), "A"); err != nil || got != tc.want {
+			t.Errorf("%s: state = %q, %v; want %q", tc.name, got, err, tc.want)
+		}
+	}
+}
