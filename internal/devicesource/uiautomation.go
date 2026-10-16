@@ -16,9 +16,12 @@ import (
 
 // uiaProbe connects a UiAutomation and lets it go, the way an
 // instrumentation's runner does on start. A leaked registration fails it with
-// "UiAutomationService ... already registered!". Android before 4.3 has no
-// UiAutomation and never prints that, so the probe is a no-op there.
-const uiaProbe = "uiautomator dump /data/local/tmp/sair-uia-probe.xml 2>&1; rm -f /data/local/tmp/sair-uia-probe.xml"
+// "UiAutomationService ... already registered!": on stdout on older versions,
+// only in the probe's own logcat crash lines on Android 16/17, where stdout
+// just says "Killed". Android before 4.3 has no UiAutomation and never prints
+// that, so the probe is a no-op there.
+const uiaProbe = "uiautomator dump /data/local/tmp/sair-uia-probe.xml 2>&1 & p=$!; wait $p; rm -f /data/local/tmp/sair-uia-probe.xml; " +
+	"logcat -d -b main,crash --pid=$p 2>/dev/null | grep 'already registered'; true"
 
 // ClearUiAutomation (sair#128) finds a UiAutomation registration a dead
 // session leaked (a killed `am instrument`, a uiautomator server left

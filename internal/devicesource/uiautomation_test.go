@@ -10,7 +10,9 @@ import (
 	pb "github.com/compscidr/sair/proto/devicesource"
 )
 
-const uiaLeak = "java.lang.IllegalStateException: UiAutomationService android.accessibilityservice.IAccessibilityServiceClient$Stub$Proxy@4a1b2c3already registered!\n"
+// What the probe prints on a leaked Pixel 7a (Android 16), captured on the
+// bench: "Killed" from the shell, then the crash line from the probe's logcat.
+const uiaLeak = "Killed \n10-16 14:37:45.562 28326 28326 E AndroidRuntime: java.lang.IllegalStateException: UiAutomationService android.accessibilityservice.IAccessibilityServiceClient$Stub$Proxy@9161eedalready registered!\n"
 
 func TestClearUiAutomationNoLeakDoesNothing(t *testing.T) {
 	s := &Server{}
