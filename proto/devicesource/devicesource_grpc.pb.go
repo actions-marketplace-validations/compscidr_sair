@@ -28,6 +28,7 @@ const (
 	DeviceSource_ResetPackages_FullMethodName   = "/devicesource.DeviceSource/ResetPackages"
 	DeviceSource_Wake_FullMethodName            = "/devicesource.DeviceSource/Wake"
 	DeviceSource_RebootIfStale_FullMethodName   = "/devicesource.DeviceSource/RebootIfStale"
+	DeviceSource_ResetBluetooth_FullMethodName  = "/devicesource.DeviceSource/ResetBluetooth"
 	DeviceSource_RecentLog_FullMethodName       = "/devicesource.DeviceSource/RecentLog"
 )
 
@@ -62,6 +63,14 @@ type DeviceSourceClient interface {
 	// unacquired and wakes it afterwards. A no-op below the limit or when the
 	// limit is 0.
 	RebootIfStale(ctx context.Context, in *RebootRequest, opts ...grpc.CallOption) (*RebootResponse, error)
+	// Cycle Bluetooth fully off (BLE too, not just classic) and back on, and
+	// wait until the adapter reports ON
+	// (sair#127), so a stack an earlier job wedged does not carry over. Used on
+	// release, and on acquire when that release reset did not run. Bluetooth
+	// is left on. Unimplemented for a phone without the adapter state in
+	// `dumpsys bluetooth_manager` (Android 4.x); DeadlineExceeded, and the
+	// device warning, when the radio does not come back.
+	ResetBluetooth(ctx context.Context, in *ResetBluetoothRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// The device source's recent log lines that mention serial, oldest first,
 	// so the proxy can attach them to a lock log when an acquire or a release
 	// reset fails on that device (sair#97).
@@ -177,6 +186,16 @@ func (c *deviceSourceClient) RebootIfStale(ctx context.Context, in *RebootReques
 	return out, nil
 }
 
+func (c *deviceSourceClient) ResetBluetooth(ctx context.Context, in *ResetBluetoothRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, DeviceSource_ResetBluetooth_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *deviceSourceClient) RecentLog(ctx context.Context, in *RecentLogRequest, opts ...grpc.CallOption) (*RecentLogResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RecentLogResponse)
@@ -218,6 +237,14 @@ type DeviceSourceServer interface {
 	// unacquired and wakes it afterwards. A no-op below the limit or when the
 	// limit is 0.
 	RebootIfStale(context.Context, *RebootRequest) (*RebootResponse, error)
+	// Cycle Bluetooth fully off (BLE too, not just classic) and back on, and
+	// wait until the adapter reports ON
+	// (sair#127), so a stack an earlier job wedged does not carry over. Used on
+	// release, and on acquire when that release reset did not run. Bluetooth
+	// is left on. Unimplemented for a phone without the adapter state in
+	// `dumpsys bluetooth_manager` (Android 4.x); DeadlineExceeded, and the
+	// device warning, when the radio does not come back.
+	ResetBluetooth(context.Context, *ResetBluetoothRequest) (*emptypb.Empty, error)
 	// The device source's recent log lines that mention serial, oldest first,
 	// so the proxy can attach them to a lock log when an acquire or a release
 	// reset fails on that device (sair#97).
@@ -255,6 +282,9 @@ func (UnimplementedDeviceSourceServer) Wake(context.Context, *WakeRequest) (*emp
 }
 func (UnimplementedDeviceSourceServer) RebootIfStale(context.Context, *RebootRequest) (*RebootResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RebootIfStale not implemented")
+}
+func (UnimplementedDeviceSourceServer) ResetBluetooth(context.Context, *ResetBluetoothRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetBluetooth not implemented")
 }
 func (UnimplementedDeviceSourceServer) RecentLog(context.Context, *RecentLogRequest) (*RecentLogResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecentLog not implemented")
@@ -399,6 +429,24 @@ func _DeviceSource_RebootIfStale_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DeviceSource_ResetBluetooth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetBluetoothRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).ResetBluetooth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_ResetBluetooth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).ResetBluetooth(ctx, req.(*ResetBluetoothRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DeviceSource_RecentLog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RecentLogRequest)
 	if err := dec(in); err != nil {
@@ -443,6 +491,10 @@ var DeviceSource_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RebootIfStale",
 			Handler:    _DeviceSource_RebootIfStale_Handler,
+		},
+		{
+			MethodName: "ResetBluetooth",
+			Handler:    _DeviceSource_ResetBluetooth_Handler,
 		},
 		{
 			MethodName: "RecentLog",

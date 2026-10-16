@@ -40,15 +40,18 @@ type Server struct {
 
 	// wakeTimeout bounds one wake + dismiss-keyguard attempt (see wake).
 	wakeTimeout time.Duration
+	// bluetoothTimeout bounds each half of the Bluetooth cycle (off, back on).
+	bluetoothTimeout time.Duration
 	// rebootAfter is REBOOT_UPTIME_HOURS; 0 disables the uptime reboot.
 	// rebootTimeout bounds the wait for a phone to be back.
 	rebootAfter, rebootTimeout time.Duration
-	// Per-serial screen outcome (Device.warning), last sair reboot and
-	// Wi-Fi join outcomes (Device.wifi).
-	stateMu  sync.Mutex
-	warnings map[string]string
-	reboots  map[string]time.Time
-	wifi     map[string]*wifiStats
+	// Per-serial screen and Bluetooth outcomes (Device.warning), last sair
+	// reboot and Wi-Fi join outcomes (Device.wifi).
+	stateMu    sync.Mutex
+	warnings   map[string]string
+	btWarnings map[string]string
+	reboots    map[string]time.Time
+	wifi       map[string]*wifiStats
 
 	// Forward watchdog (see forwardWatch); 0 means the default.
 	stallTimeout, idleWarnInterval time.Duration
@@ -88,16 +91,17 @@ func NewServer() *Server {
 		}
 	}
 	s := &Server{
-		adbPort:        port,
-		wifiSSID:       os.Getenv("WIFI_SSID"),
-		wifiPassphrase: os.Getenv("WIFI_PASSPHRASE"),
-		wifiPingHost:   "dns.google", // a hostname, so the check proves DNS too
-		wifiTimeout:    60 * time.Second,
-		wifiOffTimeout: 20 * time.Second,
-		wakeTimeout:    5 * time.Second,
-		rebootAfter:    24 * time.Hour,
-		rebootTimeout:  5 * time.Minute,
-		stopPackages:   packageList("com.android.chrome,com.google.android.gm"),
+		adbPort:          port,
+		wifiSSID:         os.Getenv("WIFI_SSID"),
+		wifiPassphrase:   os.Getenv("WIFI_PASSPHRASE"),
+		wifiPingHost:     "dns.google", // a hostname, so the check proves DNS too
+		wifiTimeout:      60 * time.Second,
+		wifiOffTimeout:   20 * time.Second,
+		wakeTimeout:      5 * time.Second,
+		bluetoothTimeout: 30 * time.Second,
+		rebootAfter:      24 * time.Hour,
+		rebootTimeout:    5 * time.Minute,
+		stopPackages:     packageList("com.android.chrome,com.google.android.gm"),
 	}
 	if v, err := strconv.ParseFloat(os.Getenv("REBOOT_UPTIME_HOURS"), 64); err == nil && v >= 0 {
 		s.rebootAfter = time.Duration(v * float64(time.Hour))

@@ -328,6 +328,27 @@ func (r *CommandRouter) Wake(serial string) error {
 	return err
 }
 
+// ResetBluetooth cycles a local device's Bluetooth through its device
+// source (sair#127). NotFound for a device this proxy has no source for.
+func (r *CommandRouter) ResetBluetooth(serial string) error {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return err
+	}
+	// Two 30s waits on the device source; this guards against one that never answers.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	_, err = client.ResetBluetooth(ctx, &dspb.ResetBluetoothRequest{Serial: serial})
+	return err
+}
+
 // RecentDeviceSourceLog returns the device source's recent log lines about
 // a local device, for a failure's lock log excerpt.
 func (r *CommandRouter) RecentDeviceSourceLog(serial string) ([]string, error) {
