@@ -159,3 +159,22 @@ func TestResetBluetoothUnimplementedWithoutAdapterState(t *testing.T) {
 		t.Errorf("commands %q, warning %q: want one dump and no warning", f.cmds, s.warning("A"))
 	}
 }
+
+// Real dumps at BLE_ON: One UI (cube A06, Android 14) and AOSP (Moto g15
+// and Redmi Note 14, Android 15), with the flag dump that follows on 15.
+func TestBleApps(t *testing.T) {
+	oneUI := "Bluetooth crashed 0 times\n\n3 BLE apps registered\n\n2 Samsung BLE apps registered\n  com.google.android.gms\n  com.samsung.android.mdx.kit\n  com.samsung.android.beaconmanager\n\nBluetoothManagerService:\n  mEnable:true\n"
+	aosp := "Bluetooth crashed 0 times\n\n1 BLE app registered\n  com.google.android.gms\n\nBluetoothManagerService:\n  mEnable:false\n\n🚩Flag dump:\n\t[■]: bleContextMapRemoveFix                                 ble_context_map_remove_fix\n"
+	for _, tc := range []struct {
+		name, out string
+		want      []string
+	}{
+		{"one ui", oneUI, []string{"com.google.android.gms", "com.samsung.android.mdx.kit", "com.samsung.android.beaconmanager"}},
+		{"aosp", aosp, []string{"com.google.android.gms"}},
+		{"none", "0 BLE apps registered\n\nBluetoothManagerService:\n", nil},
+	} {
+		if got := bleApps(tc.out); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: bleApps = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

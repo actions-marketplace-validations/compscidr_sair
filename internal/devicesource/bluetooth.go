@@ -113,9 +113,13 @@ func (s *Server) bluetoothOff(ctx context.Context, serial string) error {
 	return nil
 }
 
-// bleApps lists the packages under the dump's "BLE apps registered" headers:
+// bleApps lists the packages under the dump's "BLE app(s) registered"
+// headers, the AOSP one and One UI's extra Samsung one:
 //
-//	3 BLE apps registered
+//	1 BLE app registered                    (AOSP: Moto g15, Redmi Note 14)
+//	  com.google.android.gms
+//
+//	3 BLE apps registered                   (One UI: Galaxy A06)
 //
 //	2 Samsung BLE apps registered
 //	  com.google.android.gms
