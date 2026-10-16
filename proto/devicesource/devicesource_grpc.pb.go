@@ -63,7 +63,8 @@ type DeviceSourceClient interface {
 	// unacquired and wakes it afterwards. A no-op below the limit or when the
 	// limit is 0.
 	RebootIfStale(ctx context.Context, in *RebootRequest, opts ...grpc.CallOption) (*RebootResponse, error)
-	// Cycle Bluetooth off and back on and wait until the adapter reports ON
+	// Cycle Bluetooth fully off (BLE too, not just classic) and back on, and
+	// wait until the adapter reports ON
 	// (sair#127), so a stack an earlier job wedged does not carry over. Used on
 	// release, and on acquire when that release reset did not run. Bluetooth
 	// is left on. Unimplemented for a phone without the adapter state in
@@ -236,7 +237,8 @@ type DeviceSourceServer interface {
 	// unacquired and wakes it afterwards. A no-op below the limit or when the
 	// limit is 0.
 	RebootIfStale(context.Context, *RebootRequest) (*RebootResponse, error)
-	// Cycle Bluetooth off and back on and wait until the adapter reports ON
+	// Cycle Bluetooth fully off (BLE too, not just classic) and back on, and
+	// wait until the adapter reports ON
 	// (sair#127), so a stack an earlier job wedged does not carry over. Used on
 	// release, and on acquire when that release reset did not run. Bluetooth
 	// is left on. Unimplemented for a phone without the adapter state in

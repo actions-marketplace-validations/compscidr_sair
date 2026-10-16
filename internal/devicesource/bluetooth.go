@@ -5,7 +5,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	pb "github.com/compscidr/sair/proto/devicesource"
 	"google.golang.org/grpc/codes"
@@ -35,14 +38,12 @@ func (s *Server) ResetBluetooth(ctx context.Context, req *pb.ResetBluetoothReque
 
 	_, offErr := s.shell(ctx, req.Serial, "svc bluetooth disable")
 	if offErr == nil {
-		offErr = s.waitFor(ctx, s.bluetoothTimeout, req.Serial+" Bluetooth not off", func() error {
-			return s.checkBluetooth(ctx, req.Serial, false)
-		})
+		offErr = s.bluetoothOff(ctx, req.Serial)
 	}
 	_, onErr := s.shell(ctx, req.Serial, "svc bluetooth enable")
 	if onErr == nil {
 		onErr = s.waitFor(ctx, s.bluetoothTimeout, req.Serial+" Bluetooth not back on", func() error {
-			return s.checkBluetooth(ctx, req.Serial, true)
+			return s.checkBluetooth(ctx, req.Serial, "ON")
 		})
 	}
 	err = cmp.Or(onErr, offErr)
@@ -67,14 +68,84 @@ func (s *Server) ResetBluetooth(ctx context.Context, req *pb.ResetBluetoothReque
 	return &emptypb.Empty{}, nil
 }
 
-// checkBluetooth wants the adapter ON, or with on false, off for classic
-// Bluetooth: OFF, or BLE_ON on a phone that keeps BLE scanning available.
-func (s *Server) checkBluetooth(ctx context.Context, serial string, on bool) error {
-	st, err := s.bluetoothState(ctx, serial)
-	switch {
-	case err != nil:
+// bluetoothOff waits, after `svc bluetooth disable`, until the adapter is
+// fully OFF. Disable alone stops at BLE_ON on a phone with "Nearby device
+// scanning" on or an app holding BLE through enableBle, and BLE is where a
+// wedged advertiser or scanner lives. So BLE scanning is turned off, which
+// drops the AOSP-tracked BLE apps (all the A16 had), and whatever the dump
+// still lists as a BLE app is force-stopped (the A06's One UI beaconmanager
+// and mdx.kit ignore the setting). The setting is put back on return, before
+// Bluetooth is enabled again. Seen on the cube's phones, Oct 2026.
+func (s *Server) bluetoothOff(ctx context.Context, serial string) error {
+	wait := func(timeout time.Duration, states ...string) error {
+		return s.waitFor(ctx, timeout, serial+" Bluetooth not off", func() error {
+			return s.checkBluetooth(ctx, serial, states...)
+		})
+	}
+	if err := wait(s.bluetoothTimeout, "OFF", "BLE_ON"); err != nil {
 		return err
-	case on && st != "ON", !on && st != "OFF" && st != "BLE_ON":
+	}
+	if s.checkBluetooth(ctx, serial, "OFF") == nil {
+		return nil
+	}
+	if scan, err := s.shell(ctx, serial, "settings get global ble_scan_always_enabled"); err == nil && strings.TrimSpace(scan) == "1" {
+		if _, err := s.shell(ctx, serial, "settings put global ble_scan_always_enabled 0"); err == nil {
+			defer s.shell(context.WithoutCancel(ctx), serial, "settings put global ble_scan_always_enabled 1")
+			if wait(min(5*time.Second, s.bluetoothTimeout), "OFF") == nil {
+				return nil
+			}
+		}
+	}
+	out, err := s.shell(ctx, serial, "dumpsys bluetooth_manager")
+	if err != nil {
+		return fmt.Errorf("dumpsys bluetooth_manager: %w", err)
+	}
+	apps := bleApps(out)
+	slog.Info("Bluetooth held at BLE_ON; force-stopping its BLE apps", "serial", serial, "apps", apps)
+	for _, pkg := range apps {
+		if _, err := s.shell(ctx, serial, "am force-stop "+shellQuote(pkg)); err != nil {
+			slog.Warn("force-stop failed", "serial", serial, "package", pkg, "error", err)
+		}
+	}
+	if err := wait(s.bluetoothTimeout, "OFF"); err != nil {
+		return fmt.Errorf("%w (BLE apps: %s)", err, cmp.Or(strings.Join(apps, ", "), "none listed"))
+	}
+	return nil
+}
+
+// bleApps lists the packages under the dump's "BLE apps registered" headers:
+//
+//	3 BLE apps registered
+//
+//	2 Samsung BLE apps registered
+//	  com.google.android.gms
+//	  com.samsung.android.beaconmanager
+func bleApps(out string) []string {
+	var apps []string
+	inList := false
+	for _, line := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case strings.Contains(strings.ToLower(t), "ble app"):
+			inList = true
+		case inList && t != "" && line != t && packageName.MatchString(t):
+			apps = append(apps, t)
+		case t != "":
+			inList = false
+		}
+	}
+	return apps
+}
+
+var packageName = regexp.MustCompile(`^[A-Za-z]\w*(\.\w+)+$`)
+
+// checkBluetooth wants the adapter in one of states.
+func (s *Server) checkBluetooth(ctx context.Context, serial string, states ...string) error {
+	st, err := s.bluetoothState(ctx, serial)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(states, st) {
 		return fmt.Errorf("adapter is %s", cmp.Or(st, "unknown"))
 	}
 	return nil
