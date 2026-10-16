@@ -118,6 +118,7 @@ func (t *DeviceListTracker) rebuild() {
 	for addr, entry := range t.sources {
 		for _, device := range entry.devices {
 			serialSourceMap[device.Serial] = addr
+			device.DeviceSource = addr
 		}
 		allDevices = append(allDevices, entry.devices...)
 	}

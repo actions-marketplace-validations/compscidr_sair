@@ -61,6 +61,10 @@ message DeviceInfo {
   // Wi-Fi join outcomes; unset before the first ON, or from device sources
   // that predate the field.
   WifiStats wifi = 10;
+  // The device source the device sits behind: the host:port the proxy
+  // dialed, as in the DEVICE_SOURCE_UP event's detail (sair#123). Empty from
+  // proxies that predate the field.
+  string device_source = 11;
 }
 
 // How often a phone met the Wi-Fi ON contract (sair#96), since the device

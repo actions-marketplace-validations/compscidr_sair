@@ -110,6 +110,14 @@ func TestGetSourceAddrTwoSources(t *testing.T) {
 	if got := tracker.GetSourceAddr("DEV_B"); got != "source-b:8080" {
 		t.Errorf("GetSourceAddr(DEV_B) = %q, want source-b:8080", got)
 	}
+	// The report carries the source too, so the orchestrator can list the
+	// devices behind each source (sair#123).
+	for _, d := range tracker.GetDevices() {
+		want := map[string]string{"DEV_A": "source-a:8080", "DEV_B": "source-b:8080"}[d.Serial]
+		if d.DeviceSource != want {
+			t.Errorf("%s DeviceSource = %q, want %q", d.Serial, d.DeviceSource, want)
+		}
+	}
 }
 
 func TestSourceAddrClearedWhenDeviceDisappears(t *testing.T) {
