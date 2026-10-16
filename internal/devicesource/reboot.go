@@ -93,7 +93,7 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 func (s *Server) secureLock(ctx context.Context, serial string) (string, error) {
 	out, err := s.shell(ctx, serial, "dumpsys window policy")
 	if err != nil {
-		return "", fmt.Errorf("dumpsys window policy: %v", err)
+		return "", fmt.Errorf("dumpsys window policy: %w", err)
 	}
 	if v := dumpsysField(out, "secure="); v != "" {
 		return v, nil
@@ -103,7 +103,7 @@ func (s *Server) secureLock(ctx context.Context, serial string) (string, error) 
 	// read: NONE for Swipe or None, else PIN, PATTERN, PASSWORD, ...
 	out, err = s.shell(ctx, serial, "dumpsys lock_settings")
 	if err != nil {
-		return "", fmt.Errorf("dumpsys lock_settings: %v", err)
+		return "", fmt.Errorf("dumpsys lock_settings: %w", err)
 	}
 	for _, line := range strings.Split(out, "\n") {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "CredentialType:"); ok {
