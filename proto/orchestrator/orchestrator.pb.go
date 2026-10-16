@@ -1056,8 +1056,12 @@ func (x *LockHeartbeatResponse) GetAlive() bool {
 }
 
 type CheckKeyRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ApiKey        string                 `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	ApiKey string                 `protobuf:"bytes,1,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	// The proxy's guest keys (SAIR_GUEST_API_KEYS): api_key is also accepted
+	// when it is on the same account as one of these (sair#131). An older
+	// orchestrator ignores the field and checks the caller's account only.
+	GuestApiKeys  []string `protobuf:"bytes,2,rep,name=guest_api_keys,json=guestApiKeys,proto3" json:"guest_api_keys,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1099,9 +1103,17 @@ func (x *CheckKeyRequest) GetApiKey() string {
 	return ""
 }
 
+func (x *CheckKeyRequest) GetGuestApiKeys() []string {
+	if x != nil {
+		return x.GuestApiKeys
+	}
+	return nil
+}
+
 type CheckKeyResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SameTenant    bool                   `protobuf:"varint,1,opt,name=same_tenant,json=sameTenant,proto3" json:"same_tenant,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// api_key is on the caller's account, or on a guest key's account.
+	SameTenant    bool `protobuf:"varint,1,opt,name=same_tenant,json=sameTenant,proto3" json:"same_tenant,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2197,9 +2209,10 @@ const file_proto_orchestrator_orchestrator_proto_rawDesc = "" +
 	"\alock_id\x18\x01 \x01(\tR\x06lockId\x12,\n" +
 	"\x03log\x18\x02 \x03(\v2\x1a.orchestrator.LockLogEntryR\x03log\"-\n" +
 	"\x15LockHeartbeatResponse\x12\x14\n" +
-	"\x05alive\x18\x01 \x01(\bR\x05alive\"*\n" +
+	"\x05alive\x18\x01 \x01(\bR\x05alive\"P\n" +
 	"\x0fCheckKeyRequest\x12\x17\n" +
-	"\aapi_key\x18\x01 \x01(\tR\x06apiKey\"3\n" +
+	"\aapi_key\x18\x01 \x01(\tR\x06apiKey\x12$\n" +
+	"\x0eguest_api_keys\x18\x02 \x03(\tR\fguestApiKeys\"3\n" +
 	"\x10CheckKeyResponse\x12\x1f\n" +
 	"\vsame_tenant\x18\x01 \x01(\bR\n" +
 	"sameTenant\"J\n" +

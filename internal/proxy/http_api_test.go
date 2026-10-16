@@ -220,15 +220,18 @@ func TestHTTPApiGuestKeys(t *testing.T) {
 }
 
 // A key that is neither the owner's nor a listed guest is checked with the
-// orchestrator (sair#120): a key on the owner's account is let in, any other
-// is refused, and both answers are cached so repeats cost no round trip.
+// orchestrator with the guest keys (sair#120, sair#131): a key on the owner's
+// or a guest's account is let in, any other is refused, and both answers are cached so repeats cost no round trip.
 // An orchestrator error (down, or one that predates CheckKey) refuses the
 // request without caching, so a transient outage does not lock a key out.
 func TestHTTPApiAsksOrchestratorAboutUnlistedKeys(t *testing.T) {
 	calls := map[string]int{}
 	answers := map[string]bool{"sibling-key": true}
 	var checkErr error
-	api := &HTTPApi{apiKey: "owner-key", guestKeys: []string{"guest-a"}, checkKey: func(key string) (bool, error) {
+	api := &HTTPApi{apiKey: "owner-key", guestKeys: []string{"guest-a"}, checkKey: func(key string, guestKeys []string) (bool, error) {
+		if !slices.Equal(guestKeys, []string{"guest-a"}) {
+			t.Errorf("guest keys not passed along: %v", guestKeys)
+		}
 		calls[key]++
 		return answers[key], checkErr
 	}}
@@ -280,6 +283,7 @@ func TestHTTPApiAcquireForwardsGuestKey(t *testing.T) {
 		{"owner key sends empty tenant_api_key", "owner-key", ""},
 		{"guest key is forwarded", "guest-a", "guest-a"},
 		{"another key on the owner's account is forwarded", "sibling-key", "sibling-key"},
+		{"another key on a guest's account is forwarded", "guest-sibling", "guest-sibling"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

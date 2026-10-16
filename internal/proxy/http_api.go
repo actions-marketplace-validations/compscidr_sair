@@ -36,11 +36,12 @@ type HTTPApi struct {
 	server    *http.Server
 
 	// checkKey asks the orchestrator whether a key is on the owner's account
-	// (sair#120); commandRouter.CheckKey, tests swap it. Answers are cached
+	// (sair#120) or a guest key's account (sair#131); commandRouter.CheckKey,
+	// tests swap it. Answers are cached
 	// for keyCacheTTL, misses included, so a bad key is not a round trip per
 	// request. An error (orchestrator down, or one that predates the RPC) is
 	// a refusal and is not cached.
-	checkKey   func(key string) (bool, error)
+	checkKey   func(key string, guestKeys []string) (bool, error)
 	keyCacheMu sync.Mutex
 	keyCache   map[string]keyAnswer
 }
@@ -105,7 +106,8 @@ func (a *HTTPApi) Stop() {
 }
 
 // requireAuth accepts the owner key, any listed guest key, and any other key
-// the orchestrator says is on the owner's account; anything else is refused.
+// the orchestrator says is on the owner's account or a listed guest's
+// account; anything else is refused.
 func (a *HTTPApi) requireAuth(r *http.Request) bool {
 	key := r.Header.Get("x-api-key")
 	if key == a.apiKey || slices.Contains(a.guestKeys, key) {
@@ -123,7 +125,7 @@ func (a *HTTPApi) requireAuth(r *http.Request) bool {
 	}
 	// ponytail: the lock is held across the round trip, so concurrent
 	// requests with unlisted keys serialize behind it; fine at CI rates.
-	ok, err := a.checkKey(key)
+	ok, err := a.checkKey(key, a.guestKeys)
 	if err != nil {
 		slog.Warn("could not check api key with the orchestrator", "error", err)
 		return false
@@ -139,8 +141,9 @@ func (a *HTTPApi) requireAuth(r *http.Request) bool {
 
 // tenantKey is the key to attribute a lock to: empty for the owner (the
 // orchestrator session already is the owner), the caller's key otherwise. A
-// guest's key puts the lock under the guest's account; another key on the
-// owner's account resolves to the owner, so it is attributed the same way.
+// guest's key (listed, or another on a guest's account) puts the lock under
+// the guest's account; another key on the owner's account resolves to the
+// owner, so it is attributed the same way.
 func (a *HTTPApi) tenantKey(r *http.Request) string {
 	if key := r.Header.Get("x-api-key"); key != a.apiKey {
 		return key
