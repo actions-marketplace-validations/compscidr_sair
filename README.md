@@ -55,6 +55,22 @@ steps:
 The [full workflow example](#example-github-actions-workflow) explains each
 step.
 
+A runner with no proxy of its own (e.g. GitHub-hosted, using phones other
+accounts share) can have the action start one, at the same release as the
+action. Leave `SAIR_PROXY_URL` unset; the proxy listens on the default
+`localhost:8550`, and its log is at `$RUNNER_TEMP/sair-proxy.log`:
+
+```yaml
+  - uses: compscidr/sair@v0.1.18
+    with:
+      proxy: true
+    env:
+      SAIR_API_KEY: ${{ secrets.SAIR_API_KEY }}
+```
+
+Used at a branch or SHA rather than a release tag, the action warns and starts
+the latest release instead.
+
 ## AI agents (MCP)
 
 `sair-mcp` is an MCP server (stdio) for coding agents. It can run an app's
