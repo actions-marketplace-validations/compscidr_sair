@@ -396,6 +396,31 @@ func (r *CommandRouter) RebootIfStale(serial string) (rebooted bool, uptime time
 	return resp.Rebooted, time.Duration(resp.UptimeSeconds) * time.Second, nil
 }
 
+// ClearUiAutomation clears a UiAutomation registration a dead session leaked
+// on a local device (sair#128) and says how: "" when there was none, "killed
+// ..." or "rebooted". NotFound for a device this proxy has no source for;
+// Unimplemented from an older device source.
+func (r *CommandRouter) ClearUiAutomation(serial string) (string, error) {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return "", status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	resp, err := client.ClearUiAutomation(ctx, &dspb.UiAutomationRequest{Serial: serial})
+	if err != nil {
+		return "", err
+	}
+	return resp.Cleared, nil
+}
+
 // RemoveReverseForwards runs `adb reverse --remove-all` on a local device, so
 // a job that died before its own cleanup leaves no tunnel for the next one.
 // NotFound for a device this proxy has no source for (e.g. a relayed one).

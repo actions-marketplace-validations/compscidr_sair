@@ -2,6 +2,7 @@ package devicesource
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -34,34 +35,50 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 	if s.rebootAfter <= 0 || uptime < s.rebootAfter {
 		return resp, nil
 	}
+	slog.Info("uptime over the limit; rebooting", "serial", req.Serial, "uptime", uptime.Round(time.Minute), "limit", s.rebootAfter)
+	if err := s.reboot(ctx, req.Serial); errors.Is(err, errUnsafeReboot) {
+		slog.Warn("uptime reboot skipped: "+err.Error(), "serial", req.Serial, "uptime", uptime.Round(time.Minute))
+		return resp, nil
+	} else if err != nil {
+		return nil, err
+	}
+	resp.Rebooted = true
+	slog.Info("rebooted", "serial", req.Serial)
+	return resp, nil
+}
+
+// errUnsafeReboot wraps why a phone was left up: a reboot would strand it.
+var errUnsafeReboot = errors.New("unsafe to reboot")
+
+// reboot reboots serial, waits until it has booted and records the reboot.
+// An error wrapping errUnsafeReboot means it was not rebooted because it
+// would come back to a lock screen sair cannot get past.
+func (s *Server) reboot(ctx context.Context, serial string) error {
 	// A phone with a PIN, pattern or password boots to "unlock to start",
 	// which no dismiss-keyguard gets past: a reboot would turn a phone that
 	// works today into one a human has to visit. Leave it up and say so.
-	secure, err := s.secureLock(ctx, req.Serial)
+	secure, err := s.secureLock(ctx, serial)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "%s: %v", req.Serial, err)
+		return status.Errorf(codes.Internal, "%s: %v", serial, err)
 	}
 	switch secure {
 	case "false":
 	case "true":
-		slog.Warn("uptime reboot skipped: a secure lock is set, and sair could not unlock the phone after a reboot. Set Settings > Lock screen > Screen lock type to Swipe or None", "serial", req.Serial, "uptime", uptime.Round(time.Minute))
-		return resp, nil
+		return fmt.Errorf("%w: a secure lock is set, and sair could not unlock the phone after a reboot. Set Settings > Lock screen > Screen lock type to Swipe or None", errUnsafeReboot)
 	default:
-		slog.Warn("uptime reboot skipped: cannot tell from dumpsys window policy or lock_settings whether a secure lock is set on this Android version", "serial", req.Serial, "uptime", uptime.Round(time.Minute))
-		return resp, nil
+		return fmt.Errorf("%w: cannot tell from dumpsys window policy or lock_settings whether a secure lock is set on this Android version", errUnsafeReboot)
 	}
 	// The old boot_id is the whole proof that the phone went down; without
 	// it the first poll would pass on the old boot, so no reboot without it.
-	before, err := s.shell(ctx, req.Serial, "cat /proc/sys/kernel/random/boot_id")
+	before, err := s.shell(ctx, serial, "cat /proc/sys/kernel/random/boot_id")
 	if before = strings.TrimSpace(before); err != nil || before == "" {
-		return nil, status.Errorf(codes.Internal, "%s: boot_id before reboot: %v; not rebooting", req.Serial, err)
+		return status.Errorf(codes.Internal, "%s: boot_id before reboot: %v; not rebooting", serial, err)
 	}
-	slog.Info("rebooting: uptime over the limit", "serial", req.Serial, "uptime", uptime.Round(time.Minute), "limit", s.rebootAfter)
 	// The connection drops as the phone goes down, so the command's own
 	// error says nothing; the boot_id changing is what proves it rebooted.
-	s.shell(ctx, req.Serial, "reboot")
-	err = s.waitFor(ctx, s.rebootTimeout, req.Serial+" not back after reboot", func() error {
-		out, err := s.shell(ctx, req.Serial, "cat /proc/sys/kernel/random/boot_id; getprop sys.boot_completed")
+	s.shell(ctx, serial, "reboot")
+	err = s.waitFor(ctx, s.rebootTimeout, serial+" not back after reboot", func() error {
+		out, err := s.shell(ctx, serial, "cat /proc/sys/kernel/random/boot_id; getprop sys.boot_completed")
 		if err != nil {
 			return err
 		}
@@ -75,17 +92,15 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	resp.Rebooted = true
 	s.stateMu.Lock()
 	if s.reboots == nil {
 		s.reboots = make(map[string]time.Time)
 	}
-	s.reboots[req.Serial] = time.Now()
+	s.reboots[serial] = time.Now()
 	s.stateMu.Unlock()
-	slog.Info("rebooted", "serial", req.Serial)
-	return resp, nil
+	return nil
 }
 
 // secureLock is "true" when serial has a PIN, pattern or password, "false"
