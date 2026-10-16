@@ -218,6 +218,18 @@ you:
   is never rebooted this way, since it would come back on "unlock to start"
   and need a human; the device source logs that with the fix. The wake and
   the reboot run whether or not the bench manages Wi-Fi.
+- **Bluetooth cycled on release**, after the Wi-Fi reset: `svc bluetooth
+  disable`, wait until `dumpsys bluetooth_manager` says the adapter is off,
+  `svc bluetooth enable`, wait until it says `ON` (30 s each). A BLE stack an
+  earlier job wedged (stuck advertisers, a scanner that never restarted) does
+  not reach the next job as "No peers discovered". Skipped after an uptime
+  reboot, and done on acquire instead when no release reset ran since the
+  phone's last job (or since the proxy started). The lock log gets
+  `sair: Bluetooth cycled off and on (…)`. A radio that does not come back on
+  is in the lock log and is the device's `warning` until a cycle succeeds,
+  but does not fail the acquire, since most jobs never use Bluetooth.
+  Bluetooth is always left on. Phones without the adapter dump (Android 4.x)
+  are skipped.
 
 A bench that was already running jobs has phones carrying the last job's
 packages, so "first seen" would record those into the baseline. A test package

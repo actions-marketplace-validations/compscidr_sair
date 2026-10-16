@@ -109,6 +109,11 @@ type ScopedPortManager struct {
 	resetPackages func(serial string) (removed, suggestions []string, err error)
 	// wake is commandRouter.Wake; tests swap it.
 	wake func(serial string) error
+	// resetBluetooth is commandRouter.ResetBluetooth; tests swap it.
+	resetBluetooth func(serial string) error
+	// btFresh holds the serials whose release reset left Bluetooth freshly
+	// cycled (or rebooted), so the next acquire need not cycle it again.
+	btFresh sync.Map
 	// rebootIfStale is commandRouter.RebootIfStale; tests swap it.
 	rebootIfStale func(serial string) (rebooted bool, uptime time.Duration, err error)
 	// event is commandRouter.Event; tests swap it.
@@ -157,6 +162,7 @@ func NewScopedPortManager(
 		addReverse:            commandRouter.AddReverseForward,
 		resetPackages:         commandRouter.ResetPackages,
 		wake:                  commandRouter.Wake,
+		resetBluetooth:        commandRouter.ResetBluetooth,
 		rebootIfStale:         commandRouter.RebootIfStale,
 		event:                 commandRouter.Event,
 		recentSourceLog:       commandRouter.RecentDeviceSourceLog,
@@ -213,6 +219,9 @@ func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count 
 		mu := m.wifiLock(serial)
 		mu.Lock()
 		m.cleanDevice(sp, serial, " (left by an earlier job)")
+		if _, fresh := m.btFresh.LoadAndDelete(serial); !fresh {
+			m.cycleBluetooth(sp, serial, " (no release reset since the last job)")
+		}
 		err := m.wakeDevice(sp.LockID, serial)
 		mu.Unlock()
 		if wakeFailed(err) {
@@ -448,7 +457,7 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 
 // resetDevices returns a closed port's devices to baseline: no reverse
 // forwards, the job's packages gone, rebooted if its uptime is over the
-// bench's limit, Wi-Fi reset, awake and unlocked. A device a newer lock
+// bench's limit, Wi-Fi reset, Bluetooth cycled, awake and unlocked. A device a newer lock
 // already holds is skipped: its job owns the state now.
 func (m *ScopedPortManager) resetDevices(sp *ScopedPort) {
 	for serial := range sp.Serials {
@@ -496,6 +505,12 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 	}
 	if err := m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET); err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound {
 		slog.Warn("Wi-Fi reset failed", "serial", serial, "lockId", lockID, "error", err)
+		failed = true
+	}
+	// A fresh boot has a fresh Bluetooth stack.
+	if rebooted || !m.cycleBluetooth(sp, serial, "") {
+		m.btFresh.Store(serial, true)
+	} else {
 		failed = true
 	}
 	// Awake and unlocked for the next tenant (sair#92). The next acquire
@@ -549,6 +564,27 @@ func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) (fa
 		slog.Warn("package reset failed; a job's APKs may stay on the phone", "serial", serial, "lockId", sp.LockID, "error", err)
 		event.Outcome, event.Detail = "failed", errText(err)
 		m.event(event)
+		return true
+	}
+	return false
+}
+
+// cycleBluetooth turns a phone's Bluetooth off and back on (sair#127) and
+// says so in sp's lock log with note appended. A failure is logged, and is
+// the device's warning on the device source, but does not cost the lock:
+// most jobs never touch Bluetooth. A relayed device, a phone without the
+// adapter dump and an older device source are skipped. The caller holds
+// the serial's lock. Returns whether it failed.
+func (m *ScopedPortManager) cycleBluetooth(sp *ScopedPort, serial, note string) (failed bool) {
+	start := time.Now()
+	err := m.resetBluetooth(serial)
+	switch c := status.Code(err); {
+	case err == nil:
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: fmt.Sprintf("sair: Bluetooth cycled off and on (%s)%s", time.Since(start).Round(100*time.Millisecond), note)})
+	case c == codes.NotFound, c == codes.Unimplemented:
+	default:
+		slog.Warn("Bluetooth reset failed; the phone may have Bluetooth off", "serial", serial, "lockId", sp.LockID, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Bluetooth reset failed: " + errText(err) + note})
 		return true
 	}
 	return false

@@ -387,7 +387,8 @@ func TestAcquireFailsWhenPhoneStaysLocked(t *testing.T) {
 }
 
 // Release resets in this order: packages, uptime reboot, Wi-Fi reset, wake
-// (sair#93, sair#92). A reboot is written to the lock log.
+// (sair#93, sair#92), with no Bluetooth cycle after a reboot. A reboot is
+// written to the lock log.
 func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
 	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
@@ -403,6 +404,7 @@ func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 		return nil
 	}
 	m.wake = func(string) error { steps = append(steps, "wake"); return nil }
+	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return nil }
 	if _, err := m.Acquire(nil, 0, "", "", 0, false, false, "", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -420,6 +422,52 @@ func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("lock log has no reboot line: %v", fake.lastRelease.GetLog())
+	}
+}
+
+// Bluetooth is cycled on release after the Wi-Fi reset (sair#127), and on
+// acquire only when no release reset did it since: the first acquire after
+// a proxy start, not the one after a clean release. A failure is in the
+// lock log but does not cost the lock.
+func TestBluetoothCycledOnReleaseAndOnAcquireOnlyWhenNeeded(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	var steps []string
+	m.removeReverse = func(string) error { return nil }
+	m.resetPackages = func(string) ([]string, []string, error) { return nil, nil, nil }
+	m.rebootIfStale = func(string) (bool, time.Duration, error) { return false, time.Hour, nil }
+	m.setWifi = func(_ string, st dspb.WifiRequest_State) error { steps = append(steps, "wifi "+st.String()); return nil }
+	m.wake = func(string) error { steps = append(steps, "wake"); return nil }
+	btErr := status.Error(codes.DeadlineExceeded, "A Bluetooth not back on within 30s: adapter is OFF")
+	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return btErr }
+
+	if _, err := m.Acquire(nil, 0, "", "", 0, false, false, "", ""); err != nil {
+		t.Fatalf("a Bluetooth failure cost the lock: %v", err)
+	}
+	if want := []string{"bluetooth", "wake", "wifi OFF"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("first acquire steps = %q, want %q", steps, want)
+	}
+	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return nil }
+	steps = nil
+	m.Release("L1", "ok")
+	if want := []string{"wifi RESET", "bluetooth", "wake"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("release steps = %q, want %q", steps, want)
+	}
+	var lines []string
+	for _, e := range fake.lastRelease.GetLog() {
+		if strings.Contains(e.Service, "Bluetooth") {
+			lines = append(lines, e.Service)
+		}
+	}
+	if len(lines) != 2 || !strings.Contains(lines[0], "reset failed: A Bluetooth not back on") || !strings.Contains(lines[1], "cycled off and on") {
+		t.Errorf("lock log Bluetooth lines = %q", lines)
+	}
+	steps = nil
+	if _, err := m.Acquire(nil, 0, "", "", 0, false, false, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"wake", "wifi OFF"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("acquire after a clean release steps = %q, want %q", steps, want)
 	}
 }
 
