@@ -472,7 +472,10 @@ var (
 // clientIP, when set, is the caller's address as the proxy sees it; the
 // orchestrator records it as where the key was last used from
 // (sair-orchestrator#705). Older orchestrators ignore it.
-func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, deadlineMinutes int64, repo, runURL string, priority int32, sameProxy bool, tenantKey, clientIP string) (*LockResult, error) {
+//
+// Cancelling ctx (the runner hung up while queued) cancels the call, and the
+// orchestrator drops the waiter instead of granting it a lock (sair#133).
+func (r *CommandRouter) AcquireLock(parent context.Context, serials map[string]struct{}, count int32, deadlineMinutes int64, repo, runURL string, priority int32, sameProxy bool, tenantKey, clientIP string) (*LockResult, error) {
 	if count < 0 {
 		return nil, fmt.Errorf("count must not be negative: %d", count)
 	}
@@ -482,7 +485,7 @@ func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, de
 	if deadlineMinutes <= 0 {
 		deadlineMinutes = 30
 	}
-	ctx, cancel := r.ctxWithTimeout(time.Duration(deadlineMinutes) * time.Minute)
+	ctx, cancel := context.WithTimeout(metadata.NewOutgoingContext(parent, metadata.Pairs("x-api-key", r.apiKey)), time.Duration(deadlineMinutes)*time.Minute)
 	defer cancel()
 	if clientIP != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-client-ip", clientIP)

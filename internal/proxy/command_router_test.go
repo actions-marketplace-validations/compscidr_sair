@@ -25,6 +25,7 @@ type fakeOrchClient struct {
 	unavailable int // AcquireLock calls that fail with Unavailable before resp/err
 	acquires    int
 	clientIP    []string // x-client-ip metadata on the last AcquireLock
+	queue       bool     // AcquireLock waits, like a queued request, until ctx ends
 }
 
 // CheckKey answers true for "sibling-key", as an orchestrator would for a
@@ -63,7 +64,7 @@ func TestLockRequestsCarryRunURLAndStatus(t *testing.T) {
 	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "lock-1", Serials: []string{"DEVICE_A"}}}
 	router := &CommandRouter{orchClient: fake, apiKey: "test-key"}
 
-	if _, err := router.AcquireLock(nil, 1, 30, "compscidr/icmp", "https://github.com/compscidr/icmp/actions/runs/1", -1, true, "", ""); err != nil {
+	if _, err := router.AcquireLock(context.Background(), nil, 1, 30, "compscidr/icmp", "https://github.com/compscidr/icmp/actions/runs/1", -1, true, "", ""); err != nil {
 		t.Fatalf("AcquireLock returned error: %v", err)
 	}
 	if got := fake.lastAcquire.RunUrl; got != "https://github.com/compscidr/icmp/actions/runs/1" {
@@ -78,7 +79,7 @@ func TestLockRequestsCarryRunURLAndStatus(t *testing.T) {
 	if len(fake.clientIP) != 0 {
 		t.Errorf("no client: got x-client-ip %v", fake.clientIP)
 	}
-	if _, err := router.AcquireLock(nil, 1, 30, "", "", 0, false, "", "192.168.1.20"); err != nil {
+	if _, err := router.AcquireLock(context.Background(), nil, 1, 30, "", "", 0, false, "", "192.168.1.20"); err != nil {
 		t.Fatalf("AcquireLock returned error: %v", err)
 	}
 	if len(fake.clientIP) != 1 || fake.clientIP[0] != "192.168.1.20" {
@@ -103,7 +104,22 @@ func (f *fakeOrchClient) AcquireLock(ctx context.Context, in *pb.AcquireLockRequ
 	if f.acquires <= f.unavailable {
 		return nil, status.Error(codes.Unavailable, "error reading from server: connection reset by peer")
 	}
+	if f.queue {
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
 	return f.resp, f.err
+}
+
+// A runner that hangs up while queued cancels the orchestrator call, which
+// takes it out of the queue (sair#133).
+func TestAcquireLockEndsWhenTheCallerGivesUp(t *testing.T) {
+	router := &CommandRouter{orchClient: &fakeOrchClient{queue: true}, apiKey: "test-key"}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(10*time.Millisecond, cancel)
+	if _, err := router.AcquireLock(ctx, nil, 1, 30, "", "", 0, false, "", ""); status.Code(err) != codes.Canceled {
+		t.Fatalf("got %v, want Canceled", err)
+	}
 }
 
 func TestAcquireLockRetriesAConnectionReset(t *testing.T) {
@@ -112,7 +128,7 @@ func TestAcquireLockRetriesAConnectionReset(t *testing.T) {
 	fake := &fakeOrchClient{unavailable: 2, resp: &pb.AcquireLockResponse{LockId: "lock-1", Serials: []string{"DEVICE_A"}}}
 	router := &CommandRouter{orchClient: fake, apiKey: "test-key"}
 
-	result, err := router.AcquireLock(nil, 1, 30, "", "", 0, true, "", "")
+	result, err := router.AcquireLock(context.Background(), nil, 1, 30, "", "", 0, true, "", "")
 	if err != nil || result.LockID != "lock-1" || fake.acquires != 3 {
 		t.Fatalf("got %+v, %v after %d calls; want lock-1 on the third", result, err, fake.acquires)
 	}
@@ -120,7 +136,7 @@ func TestAcquireLockRetriesAConnectionReset(t *testing.T) {
 	// Anything but Unavailable is the orchestrator's answer: no retry.
 	fake = &fakeOrchClient{err: status.Error(codes.InvalidArgument, "cannot satisfy request")}
 	router.orchClient = fake
-	if _, err := router.AcquireLock(nil, 2, 30, "", "", 0, true, "", ""); status.Code(err) != codes.InvalidArgument || fake.acquires != 1 {
+	if _, err := router.AcquireLock(context.Background(), nil, 2, 30, "", "", 0, true, "", ""); status.Code(err) != codes.InvalidArgument || fake.acquires != 1 {
 		t.Fatalf("got %v after %d calls; want InvalidArgument after 1", err, fake.acquires)
 	}
 }
@@ -131,7 +147,7 @@ func TestAcquireLockSendsCount(t *testing.T) {
 	}
 	router := &CommandRouter{orchClient: fake, apiKey: "test-key"}
 
-	result, err := router.AcquireLock(nil, 2, 30, "compscidr/hello-kotlin-android", "", 0, false, "", "")
+	result, err := router.AcquireLock(context.Background(), nil, 2, 30, "compscidr/hello-kotlin-android", "", 0, false, "", "")
 	if err != nil {
 		t.Fatalf("AcquireLock returned error: %v", err)
 	}
@@ -156,7 +172,7 @@ func TestAcquireLockWithSerialsSendsNoCount(t *testing.T) {
 	}
 	router := &CommandRouter{orchClient: fake, apiKey: "test-key"}
 
-	if _, err := router.AcquireLock(map[string]struct{}{"DEVICE_A": {}}, 0, 30, "", "", 0, false, "", ""); err != nil {
+	if _, err := router.AcquireLock(context.Background(), map[string]struct{}{"DEVICE_A": {}}, 0, 30, "", "", 0, false, "", ""); err != nil {
 		t.Fatalf("AcquireLock returned error: %v", err)
 	}
 
@@ -183,7 +199,7 @@ func TestAcquireLockRejectsInvalidCount(t *testing.T) {
 			fake := &fakeOrchClient{}
 			router := &CommandRouter{orchClient: fake, apiKey: "test-key"}
 
-			if _, err := router.AcquireLock(tt.serials, tt.count, 30, "", "", 0, false, "", ""); err == nil {
+			if _, err := router.AcquireLock(context.Background(), tt.serials, tt.count, 30, "", "", 0, false, "", ""); err == nil {
 				t.Error("expected an error")
 			}
 			if fake.lastAcquire != nil {
@@ -196,7 +212,7 @@ func TestAcquireLockRejectsInvalidCount(t *testing.T) {
 func TestAcquireLockCarriesProxyID(t *testing.T) {
 	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "lock-1"}}
 	router := &CommandRouter{orchClient: fake, apiKey: "test-key", proxyID: "host-a"}
-	if _, err := router.AcquireLock(nil, 1, 30, "", "", 0, false, "", ""); err != nil {
+	if _, err := router.AcquireLock(context.Background(), nil, 1, 30, "", "", 0, false, "", ""); err != nil {
 		t.Fatalf("AcquireLock: %v", err)
 	}
 	if got := fake.lastAcquire.GetProxyId(); got != "host-a" {
