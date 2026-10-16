@@ -1,6 +1,7 @@
 package devicesource
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -45,6 +46,64 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 	resp.Rebooted = true
 	slog.Info("rebooted", "serial", req.Serial)
 	return resp, nil
+}
+
+// radioServices maps a WedgedRadioRequest's radio to the service its probe
+// dumps.
+var radioServices = map[string]string{"wifi": "wifi", "bluetooth": "bluetooth_manager"}
+
+// RebootIfWedged (sair#139) reboots a phone whose radio reset just failed
+// when that radio's service no longer answers: a framework wedged at the
+// driver or HAL level, which hangs `svc` and which no toggle clears. A
+// service that answers is left alone, since some phones hang on `svc` with
+// healthy radios (Galaxy A13, Android 12). The caller re-runs the reset.
+func (s *Server) RebootIfWedged(ctx context.Context, req *pb.WedgedRadioRequest) (*pb.RebootResponse, error) {
+	if err := s.checkSerial(req.Serial); err != nil {
+		return nil, err
+	}
+	service, ok := radioServices[req.Radio]
+	if !ok {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown radio %q", req.Radio)
+	}
+	out, err := s.radioShell(ctx, req.Serial, "dumpsys "+service)
+	if !errors.Is(err, errRadioHung) && !strings.Contains(out, "DUMP TIMEOUT") {
+		return &pb.RebootResponse{}, nil
+	}
+	slog.Warn("radio service not answering; rebooting", "serial", req.Serial, "radio", req.Radio)
+	if err := s.reboot(ctx, req.Serial); errors.Is(err, errUnsafeReboot) {
+		return nil, status.Errorf(codes.FailedPrecondition, "%s: %s wedged, and %v", req.Serial, req.Radio, err)
+	} else if err != nil {
+		return nil, err
+	}
+	return &pb.RebootResponse{Rebooted: true}, nil
+}
+
+// errRadioHung is a radio command that did not return within radioTimeout.
+var errRadioHung = errors.New("did not return")
+
+// radioShell is shell bounded by radioTimeout (15s when unset): a command
+// that goes through a wedged radio service never returns (sair#139).
+func (s *Server) radioShell(ctx context.Context, serial, command string) (string, error) {
+	timeout := cmp.Or(s.radioTimeout, 15*time.Second)
+	c, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := s.shell(c, serial, command)
+	if err != nil && c.Err() != nil && ctx.Err() == nil {
+		err = fmt.Errorf("%w within %s", errRadioHung, timeout)
+	}
+	return out, err
+}
+
+// svc runs `svc <args>` bounded. A hang alone is not an error: some phones
+// hang on svc with healthy radios, so the state wait after it decides, and
+// a radio that never gets there goes to RebootIfWedged.
+func (s *Server) svc(ctx context.Context, serial, args string) error {
+	_, err := s.radioShell(ctx, serial, "svc "+args)
+	if errors.Is(err, errRadioHung) {
+		slog.Warn("svc "+args+" "+err.Error()+"; going by the radio's state", "serial", serial)
+		return nil
+	}
+	return err
 }
 
 // errUnsafeReboot wraps why a phone was left up: a reboot would strand it.

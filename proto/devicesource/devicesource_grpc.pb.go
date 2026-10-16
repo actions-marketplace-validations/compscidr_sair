@@ -29,6 +29,7 @@ const (
 	DeviceSource_Wake_FullMethodName              = "/devicesource.DeviceSource/Wake"
 	DeviceSource_RebootIfStale_FullMethodName     = "/devicesource.DeviceSource/RebootIfStale"
 	DeviceSource_ResetBluetooth_FullMethodName    = "/devicesource.DeviceSource/ResetBluetooth"
+	DeviceSource_RebootIfWedged_FullMethodName    = "/devicesource.DeviceSource/RebootIfWedged"
 	DeviceSource_ClearUiAutomation_FullMethodName = "/devicesource.DeviceSource/ClearUiAutomation"
 	DeviceSource_RecentLog_FullMethodName         = "/devicesource.DeviceSource/RecentLog"
 )
@@ -72,6 +73,13 @@ type DeviceSourceClient interface {
 	// `dumpsys bluetooth_manager` (Android 4.x); DeadlineExceeded, and the
 	// device warning, when the radio does not come back.
 	ResetBluetooth(ctx context.Context, in *ResetBluetoothRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Reboot the device if a radio whose reset just failed is wedged: its
+	// service (`dumpsys wifi` / `dumpsys bluetooth_manager`) no longer answers
+	// (sair#139). A phone whose service answers is left up, since some hang on
+	// `svc` with healthy radios. Same rules as RebootIfStale: never a phone
+	// with a secure lock (FailedPrecondition), and the caller holds the reset
+	// lock, re-runs the reset and wakes the phone afterwards.
+	RebootIfWedged(ctx context.Context, in *WedgedRadioRequest, opts ...grpc.CallOption) (*RebootResponse, error)
 	// Clear a UiAutomation registration a dead session leaked (sair#128),
 	// which fails every later instrumentation with "UiAutomationService ...
 	// already registered!". Probes with `uiautomator dump`; on a leak kills
@@ -203,6 +211,16 @@ func (c *deviceSourceClient) ResetBluetooth(ctx context.Context, in *ResetBlueto
 	return out, nil
 }
 
+func (c *deviceSourceClient) RebootIfWedged(ctx context.Context, in *WedgedRadioRequest, opts ...grpc.CallOption) (*RebootResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RebootResponse)
+	err := c.cc.Invoke(ctx, DeviceSource_RebootIfWedged_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *deviceSourceClient) ClearUiAutomation(ctx context.Context, in *UiAutomationRequest, opts ...grpc.CallOption) (*UiAutomationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UiAutomationResponse)
@@ -262,6 +280,13 @@ type DeviceSourceServer interface {
 	// `dumpsys bluetooth_manager` (Android 4.x); DeadlineExceeded, and the
 	// device warning, when the radio does not come back.
 	ResetBluetooth(context.Context, *ResetBluetoothRequest) (*emptypb.Empty, error)
+	// Reboot the device if a radio whose reset just failed is wedged: its
+	// service (`dumpsys wifi` / `dumpsys bluetooth_manager`) no longer answers
+	// (sair#139). A phone whose service answers is left up, since some hang on
+	// `svc` with healthy radios. Same rules as RebootIfStale: never a phone
+	// with a secure lock (FailedPrecondition), and the caller holds the reset
+	// lock, re-runs the reset and wakes the phone afterwards.
+	RebootIfWedged(context.Context, *WedgedRadioRequest) (*RebootResponse, error)
 	// Clear a UiAutomation registration a dead session leaked (sair#128),
 	// which fails every later instrumentation with "UiAutomationService ...
 	// already registered!". Probes with `uiautomator dump`; on a leak kills
@@ -308,6 +333,9 @@ func (UnimplementedDeviceSourceServer) RebootIfStale(context.Context, *RebootReq
 }
 func (UnimplementedDeviceSourceServer) ResetBluetooth(context.Context, *ResetBluetoothRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResetBluetooth not implemented")
+}
+func (UnimplementedDeviceSourceServer) RebootIfWedged(context.Context, *WedgedRadioRequest) (*RebootResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RebootIfWedged not implemented")
 }
 func (UnimplementedDeviceSourceServer) ClearUiAutomation(context.Context, *UiAutomationRequest) (*UiAutomationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClearUiAutomation not implemented")
@@ -473,6 +501,24 @@ func _DeviceSource_ResetBluetooth_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DeviceSource_RebootIfWedged_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WedgedRadioRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).RebootIfWedged(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_RebootIfWedged_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).RebootIfWedged(ctx, req.(*WedgedRadioRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DeviceSource_ClearUiAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UiAutomationRequest)
 	if err := dec(in); err != nil {
@@ -539,6 +585,10 @@ var DeviceSource_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResetBluetooth",
 			Handler:    _DeviceSource_ResetBluetooth_Handler,
+		},
+		{
+			MethodName: "RebootIfWedged",
+			Handler:    _DeviceSource_RebootIfWedged_Handler,
 		},
 		{
 			MethodName: "ClearUiAutomation",

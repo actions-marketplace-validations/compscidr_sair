@@ -244,6 +244,14 @@ you:
   cycle succeeds, but does not fail the acquire, since most jobs never use
   Bluetooth. Bluetooth is always left on. Phones without the adapter dump
   (Android 4.x) are skipped.
+- **Rebooted when a radio is wedged**: each `svc wifi` / `svc bluetooth`
+  toggle and radio state read is bounded (15 s). When the Wi-Fi reset or the
+  Bluetooth cycle fails, the device source probes the radio's service
+  (`dumpsys wifi` / `dumpsys bluetooth_manager`); only if that hangs too is
+  the phone rebooted (same rules as the uptime reboot) and the reset run
+  again. A phone that hangs on `svc` with a healthy radio is not rebooted.
+  The lock log gets `sair: radio wedged (wifi|bluetooth), rebooted`, and a
+  radio still bad after the reboot fails the reset as before.
 
 A bench that was already running jobs has phones carrying the last job's
 packages, so "first seen" would record those into the baseline. A test package

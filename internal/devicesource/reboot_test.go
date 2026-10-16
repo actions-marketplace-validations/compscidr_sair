@@ -129,3 +129,37 @@ func TestSecureLockFallsBackToLockSettings(t *testing.T) {
 		}
 	}
 }
+
+// A radio whose reset failed is rebooted only when its service hangs too
+// (sair#139): a dump that answers means the phone just ignores svc.
+func TestRebootIfWedgedOnlyWhenTheServiceHangs(t *testing.T) {
+	for _, hung := range []bool{false, true} {
+		s := &Server{radioTimeout: 10 * time.Millisecond, rebootTimeout: time.Second}
+		var cmds []string
+		s.shell = func(ctx context.Context, _, command string) (string, error) {
+			cmds = append(cmds, command)
+			switch command {
+			case "dumpsys wifi":
+				if hung {
+					<-ctx.Done()
+					return "", ctx.Err()
+				}
+				return "Wi-Fi is enabled\n", nil
+			case "dumpsys window policy":
+				return policyUnlocked, nil
+			case "cat /proc/sys/kernel/random/boot_id":
+				return "old-boot\n", nil
+			case "cat /proc/sys/kernel/random/boot_id; getprop sys.boot_completed":
+				return "new-boot\n1\n", nil
+			}
+			return "", nil
+		}
+		resp, err := s.RebootIfWedged(context.Background(), &pb.WedgedRadioRequest{Serial: "A", Radio: "wifi"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Rebooted != hung || (countOf(cmds, "reboot") == 1) != hung {
+			t.Errorf("hung=%v: rebooted=%v, commands %q", hung, resp.Rebooted, cmds)
+		}
+	}
+}

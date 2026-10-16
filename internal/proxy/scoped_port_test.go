@@ -504,3 +504,58 @@ func TestScopedPortReleasesLockWithNoClient(t *testing.T) {
 		t.Errorf("release = %+v", rel)
 	}
 }
+
+// A radio reset that fails on a wedged radio reboots the phone and runs
+// again (sair#139); the lock log says so. After a Wi-Fi reboot the
+// Bluetooth stack is fresh, so it is not cycled.
+func TestReleaseRebootsAWedgedRadioAndResetsAgain(t *testing.T) {
+	for _, radio := range []string{"wifi", "bluetooth"} {
+		fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+		m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+		var steps []string
+		m.removeReverse = func(string) error { return nil }
+		m.resetPackages = func(string) ([]string, []string, error) { return nil, nil, nil }
+		m.rebootIfStale = func(string) (bool, time.Duration, error) { return false, time.Hour, nil }
+		m.wake = func(string) error { return nil }
+		wedged := true
+		hang := status.Error(codes.DeadlineExceeded, "radio not back")
+		m.setWifi = func(_ string, st dspb.WifiRequest_State) error {
+			steps = append(steps, "wifi "+st.String())
+			if radio == "wifi" && st == dspb.WifiRequest_RESET && wedged {
+				return hang
+			}
+			return nil
+		}
+		m.resetBluetooth = func(string) error {
+			steps = append(steps, "bluetooth")
+			if radio == "bluetooth" && wedged {
+				return hang
+			}
+			return nil
+		}
+		m.rebootIfWedged = func(_, r string) (bool, error) {
+			steps = append(steps, "unwedge "+r)
+			wedged = false
+			return true, nil
+		}
+		if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		steps, wedged = nil, true
+		m.Release("L1", "ok")
+		want := map[string][]string{
+			"wifi":      {"wifi RESET", "unwedge wifi", "wifi RESET"},
+			"bluetooth": {"wifi RESET", "bluetooth", "unwedge bluetooth", "bluetooth"},
+		}[radio]
+		if !reflect.DeepEqual(steps, want) {
+			t.Errorf("%s: release steps = %q, want %q", radio, steps, want)
+		}
+		found := false
+		for _, e := range fake.lastRelease.GetLog() {
+			found = found || e.Service == "sair: radio wedged ("+radio+"), rebooted"
+		}
+		if !found {
+			t.Errorf("%s: lock log has no wedged line: %v", radio, fake.lastRelease.GetLog())
+		}
+	}
+}

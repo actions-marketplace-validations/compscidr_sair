@@ -396,6 +396,31 @@ func (r *CommandRouter) RebootIfStale(serial string) (rebooted bool, uptime time
 	return resp.Rebooted, time.Duration(resp.UptimeSeconds) * time.Second, nil
 }
 
+// RebootIfWedged reboots a local device whose radio ("wifi" or "bluetooth")
+// reset just failed if that radio's service no longer answers, and returns
+// once it is back (sair#139). NotFound for a device this proxy has no source
+// for; Unimplemented from an older device source.
+func (r *CommandRouter) RebootIfWedged(serial, radio string) (rebooted bool, err error) {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return false, status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	resp, err := client.RebootIfWedged(ctx, &dspb.WedgedRadioRequest{Serial: serial, Radio: radio})
+	if err != nil {
+		return false, err
+	}
+	return resp.Rebooted, nil
+}
+
 // ClearUiAutomation clears a UiAutomation registration a dead session leaked
 // on a local device (sair#128) and says how: "" when there was none, "killed
 // ..." or "rebooted". NotFound for a device this proxy has no source for;
