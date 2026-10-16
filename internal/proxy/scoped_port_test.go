@@ -386,15 +386,20 @@ func TestAcquireFailsWhenPhoneStaysLocked(t *testing.T) {
 	}
 }
 
-// Release resets in this order: packages, uptime reboot, Wi-Fi reset, wake
-// (sair#93, sair#92), with no Bluetooth cycle after a reboot. A reboot is
-// written to the lock log.
+// Release resets in this order: packages, leaked UiAutomation, uptime
+// reboot, Wi-Fi reset, wake (sair#128, sair#93, sair#92), with no Bluetooth
+// cycle after a reboot. The UiAutomation cleanup and the reboot are written
+// to the lock log.
 func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
 	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
 	var steps []string
 	m.removeReverse = func(string) error { return nil }
 	m.resetPackages = func(string) ([]string, []string, error) { steps = append(steps, "packages"); return nil, nil, nil }
+	m.clearUiAutomation = func(string) (string, error) {
+		steps = append(steps, "uiautomation")
+		return "killed 2190 app_process", nil
+	}
 	m.rebootIfStale = func(string) (bool, time.Duration, error) {
 		steps = append(steps, "reboot")
 		return true, 30 * time.Hour, nil
@@ -410,15 +415,19 @@ func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 	}
 	steps = nil
 	m.Release("L1", "ok")
-	want := []string{"packages", "reboot", "wifi RESET", "wake"}
+	want := []string{"packages", "uiautomation", "reboot", "wifi RESET", "wake"}
 	if !reflect.DeepEqual(steps, want) {
 		t.Errorf("release steps = %q, want %q", steps, want)
 	}
-	found := false
+	found, uia := false, false
 	for _, e := range fake.lastRelease.GetLog() {
 		if strings.Contains(e.Service, "rebooted after release (uptime 30h0m0s)") {
 			found = true
 		}
+		uia = uia || e.Service == "sair: cleared a leaked UiAutomation registration (killed 2190 app_process)"
+	}
+	if !uia {
+		t.Errorf("lock log has no UiAutomation line: %v", fake.lastRelease.GetLog())
 	}
 	if !found {
 		t.Errorf("lock log has no reboot line: %v", fake.lastRelease.GetLog())

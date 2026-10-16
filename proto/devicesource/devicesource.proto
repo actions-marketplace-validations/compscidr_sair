@@ -41,6 +41,12 @@ service DeviceSource {
   // `dumpsys bluetooth_manager` (Android 4.x); DeadlineExceeded, and the
   // device warning, when the radio does not come back.
   rpc ResetBluetooth(ResetBluetoothRequest) returns (google.protobuf.Empty) {}
+  // Clear a UiAutomation registration a dead session leaked (sair#128),
+  // which fails every later instrumentation with "UiAutomationService ...
+  // already registered!". Probes with `uiautomator dump`; on a leak kills
+  // the shell-launched processes that can hold one, and reboots only if the
+  // probe still fails. The caller holds the device's reset lock.
+  rpc ClearUiAutomation(UiAutomationRequest) returns (UiAutomationResponse) {}
   // The device source's recent log lines that mention serial, oldest first,
   // so the proxy can attach them to a lock log when an acquire or a release
   // reset fails on that device (sair#97).
@@ -71,6 +77,16 @@ message RebootResponse {
   bool rebooted = 1;
   // Uptime before the call, in seconds.
   int64 uptime_seconds = 2;
+}
+
+message UiAutomationRequest {
+  string serial = 1;
+}
+
+message UiAutomationResponse {
+  // Empty when no leak was found; else how it was cleared: "killed <pid>
+  // <name>, ..." or "rebooted".
+  string cleared = 1;
 }
 
 message ResetPackagesRequest {

@@ -196,6 +196,14 @@ you:
   `if: always()` release step, its runner died, or the proxy was down when
   the lock expired, is cleaned up by the next job, whose lock log then shows
   `sair: uninstalled … (left by an earlier job)`.
+- **No leaked UiAutomation**, on release and on acquire: a killed `am
+  instrument` or a leftover uiautomator server can leave a UiAutomation
+  registered, failing every later instrumentation with `UiAutomationService
+  … already registered!`. A `uiautomator dump` probe detects it; sair then
+  kills the shell user's `app_process`/`uiautomator` processes, which
+  unregisters it, and reboots only if the probe still fails (never a phone
+  with a secure lock). The lock log gets `sair: cleared a leaked UiAutomation
+  registration (killed … | rebooted)`.
 - **Awake and unlocked**, on acquire and again after the release reset: the
   screen is woken and the keyguard dismissed, then verified (`dumpsys power`
   says `Awake`, `dumpsys window policy` says the keyguard is not showing),

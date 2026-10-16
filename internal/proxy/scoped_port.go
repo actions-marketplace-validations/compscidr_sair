@@ -107,6 +107,8 @@ type ScopedPortManager struct {
 	addReverse func(serial string, port int) error
 	// resetPackages is commandRouter.ResetPackages; tests swap it.
 	resetPackages func(serial string) (removed, suggestions []string, err error)
+	// clearUiAutomation is commandRouter.ClearUiAutomation; tests swap it.
+	clearUiAutomation func(serial string) (string, error)
 	// wake is commandRouter.Wake; tests swap it.
 	wake func(serial string) error
 	// resetBluetooth is commandRouter.ResetBluetooth; tests swap it.
@@ -161,6 +163,7 @@ func NewScopedPortManager(
 		removeReverse:         commandRouter.RemoveReverseForwards,
 		addReverse:            commandRouter.AddReverseForward,
 		resetPackages:         commandRouter.ResetPackages,
+		clearUiAutomation:     commandRouter.ClearUiAutomation,
 		wake:                  commandRouter.Wake,
 		resetBluetooth:        commandRouter.ResetBluetooth,
 		rebootIfStale:         commandRouter.RebootIfStale,
@@ -541,11 +544,11 @@ func (m *ScopedPortManager) waitForSource(serial string) {
 	slog.Warn("rebooted phone is not back in the device list yet", "serial", serial)
 }
 
-// cleanDevice removes a phone's reverse forwards and the packages a job
-// installed, recording what went in sp's lock log with note appended. The
-// caller holds the serial's lock. Runs on release and again on acquire, so
-// a job that never released is cleaned up by the next one. Returns whether
-// the package reset failed.
+// cleanDevice removes a phone's reverse forwards, the packages a job
+// installed and a UiAutomation registration it leaked, recording what went
+// in sp's lock log with note appended. The caller holds the serial's lock.
+// Runs on release and again on acquire, so a job that never released is
+// cleaned up by the next one. Returns whether a reset step failed.
 func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) (failed bool) {
 	if err := m.removeReverse(serial); err != nil && status.Code(err) != codes.NotFound {
 		slog.Warn("removing reverse forwards failed", "serial", serial, "lockId", sp.LockID, "error", err)
@@ -564,9 +567,26 @@ func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) (fa
 		slog.Warn("package reset failed; a job's APKs may stay on the phone", "serial", serial, "lockId", sp.LockID, "error", err)
 		event.Outcome, event.Detail = "failed", errText(err)
 		m.event(event)
-		return true
+		failed = true
 	}
-	return false
+	// A leaked UiAutomation fails every later instrumentation (sair#128).
+	start := time.Now()
+	cleared, err := m.clearUiAutomation(serial)
+	switch c := status.Code(err); {
+	case err == nil && cleared != "":
+		slog.Info("cleared a leaked UiAutomation registration", "serial", serial, "lockId", sp.LockID, "how", cleared)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: cleared a leaked UiAutomation registration (" + cleared + ")" + note})
+		if cleared == "rebooted" {
+			m.waitForSource(serial)
+			m.event(&pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_REBOOT, Serial: serial, LockId: sp.LockID, Outcome: "ok", Detail: "leaked UiAutomation", DurationMs: time.Since(start).Milliseconds()})
+		}
+	case err == nil, c == codes.NotFound, c == codes.Unimplemented:
+	default:
+		slog.Warn("clearing a leaked UiAutomation failed; instrumentation on this phone will fail until it reboots", "serial", serial, "lockId", sp.LockID, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: leaked UiAutomation registration not cleared: " + errText(err) + note})
+		failed = true
+	}
+	return failed
 }
 
 // cycleBluetooth turns a phone's Bluetooth off and back on (sair#127) and
