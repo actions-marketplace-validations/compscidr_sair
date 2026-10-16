@@ -123,6 +123,11 @@ while [[ $# -gt 0 ]]; do
             echo "  --priority N      Queue order while waiting: higher goes first, ties are FIFO (default: 0)" >&2
             echo "  --no-wifi         Hand over phones verified offline instead of online on the bench Wi-Fi" >&2
             echo "  --same-proxy      Take every device from one proxy, so the phones sit together" >&2
+            echo "" >&2
+            echo "The lock is held until sair-release (or until the orchestrator times it out)." >&2
+            echo "The eval exports SAIR_LOCK_ID only into the current shell. If the release" >&2
+            echo "runs in another shell, keep the lock ID (also printed to stderr) and run:" >&2
+            echo "  sair-release --lock-id LOCK_ID" >&2
             exit 0
             ;;
         *)
@@ -248,7 +253,9 @@ if [[ -z "$SCOPED_PORT" ]]; then
     exit 1
 fi
 
-echo "sair-acquire: acquired lock ${LOCK_ID}" >&2
+# SAIR_LOCK_ID dies with this shell; callers whose release runs elsewhere
+# (e.g. an agent's next command) need the ID from here.
+echo "sair-acquire: acquired lock ${LOCK_ID} (release from any shell: sair-release --lock-id ${LOCK_ID})" >&2
 echo "sair-acquire: devices: ${SERIALS}" >&2
 echo "sair-acquire: scoped ADB port: ${SCOPED_PORT}" >&2
 
