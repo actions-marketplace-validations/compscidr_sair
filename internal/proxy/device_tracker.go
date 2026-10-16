@@ -66,6 +66,11 @@ func (t *DeviceListTracker) Start() {
 // source that is new, or back after it went stale, is a DEVICE_SOURCE_UP
 // event carrying its version.
 func (t *DeviceListTracker) UpdateDevices(sourceAddr, version string, devices []*pb.DeviceInfo) {
+	// Stamped here, before the structs are published: rebuild() runs while
+	// the reporter goroutine marshals the previous snapshot's structs.
+	for _, d := range devices {
+		d.DeviceSource = sourceAddr
+	}
 	t.mu.Lock()
 	_, known := t.sources[sourceAddr]
 	t.sources[sourceAddr] = sourceEntry{devices: devices, lastSeen: time.Now()}
