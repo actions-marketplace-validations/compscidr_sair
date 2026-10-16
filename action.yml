@@ -5,6 +5,13 @@ description: >-
 branding:
   icon: smartphone
   color: green
+inputs:
+  proxy:
+    description: >-
+      Start a sair-proxy in the job, at this action's release, for runners with
+      no proxy of their own (e.g. GitHub-hosted). Reads SAIR_API_KEY from the
+      job's env. Its log is at $RUNNER_TEMP/sair-proxy.log.
+    default: "false"
 runs:
   using: composite
   steps:
@@ -15,3 +22,40 @@ runs:
       run: |
         echo "${GITHUB_ACTION_PATH}/tools" >> "$GITHUB_PATH"
         echo "SAIR_TOOLS_VERSION=${ACTION_REF}" >> "$GITHUB_ENV"
+
+    - if: inputs.proxy == 'true'
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        if [[ -z "${SAIR_API_KEY:-}" ]]; then
+          echo "::error::proxy: true needs SAIR_API_KEY in the job's env"
+          exit 1
+        fi
+        # install.sh only takes a release; a branch or SHA gets the latest one.
+        VERSION_ARGS=()
+        if [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          VERSION_ARGS=(--version "$ACTION_REF")
+        else
+          echo "::warning::sair action used at '${ACTION_REF}', not a release tag: starting the latest sair-proxy release"
+        fi
+        # Its own dir, kept off GITHUB_PATH, so the release's tools don't shadow the action's.
+        BIN="${RUNNER_TEMP}/sair-proxy-bin"
+        PATH="${BIN}:${PATH}" bash "${GITHUB_ACTION_PATH}/install.sh" --dir "$BIN" "${VERSION_ARGS[@]}"
+
+        LOG="${RUNNER_TEMP}/sair-proxy.log"
+        # The auto-updater would replace the pinned release with the latest one.
+        SAIR_AUTO_UPDATE=false nohup "${BIN}/sair-proxy" > "$LOG" 2>&1 &
+        PID=$!
+        # Any HTTP answer (even 401) means it is up, so sair-acquire doesn't race it.
+        for _ in $(seq 60); do
+          if curl -s --max-time 2 -o /dev/null "http://localhost:${PROXY_HTTP_PORT:-8550}/status"; then
+            echo "sair-proxy is up (log: ${LOG})"
+            exit 0
+          fi
+          kill -0 "$PID" 2>/dev/null || break
+          sleep 1
+        done
+        echo "::error::sair-proxy did not come up"
+        tail -n 50 "$LOG"
+        exit 1

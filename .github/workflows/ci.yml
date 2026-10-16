@@ -87,3 +87,13 @@ jobs:
           command -v sair-acquire
           command -v sair-release
           command -v sair-wifi
+
+      # Only checks the proxy comes up: the fake key never gets a lock.
+      - uses: ./
+        with:
+          proxy: true
+        env:
+          SAIR_API_KEY: ci-fake-key
+
+      - name: Proxy answers
+        run: curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8550/status
