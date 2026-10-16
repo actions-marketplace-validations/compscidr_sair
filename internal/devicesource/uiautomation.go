@@ -66,8 +66,10 @@ func (s *Server) ClearUiAutomation(ctx context.Context, req *pb.UiAutomationRequ
 	} else if err != nil {
 		return nil, err
 	}
-	if leaked, err := s.uiaLeaked(ctx, req.Serial); err != nil || leaked {
-		return nil, status.Errorf(codes.Internal, "%s: UiAutomation still registered after a reboot: %v", req.Serial, err)
+	if leaked, err := s.uiaLeaked(ctx, req.Serial); err != nil {
+		return nil, err
+	} else if leaked {
+		return nil, status.Errorf(codes.Internal, "%s: UiAutomation still registered after a reboot", req.Serial)
 	}
 	return &pb.UiAutomationResponse{Cleared: "rebooted"}, nil
 }
