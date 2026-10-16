@@ -37,17 +37,17 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 	// A phone with a PIN, pattern or password boots to "unlock to start",
 	// which no dismiss-keyguard gets past: a reboot would turn a phone that
 	// works today into one a human has to visit. Leave it up and say so.
-	out, err = s.shell(ctx, req.Serial, "dumpsys window policy")
+	secure, err := s.secureLock(ctx, req.Serial)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "%s: dumpsys window policy: %v", req.Serial, err)
+		return nil, status.Errorf(codes.Internal, "%s: %v", req.Serial, err)
 	}
-	switch dumpsysField(out, "secure=") {
+	switch secure {
 	case "false":
 	case "true":
 		slog.Warn("uptime reboot skipped: a secure lock is set, and sair could not unlock the phone after a reboot. Set Settings > Lock screen > Screen lock type to Swipe or None", "serial", req.Serial, "uptime", uptime.Round(time.Minute))
 		return resp, nil
 	default:
-		slog.Warn("uptime reboot skipped: cannot tell from dumpsys window policy whether a secure lock is set on this Android version", "serial", req.Serial, "uptime", uptime.Round(time.Minute))
+		slog.Warn("uptime reboot skipped: cannot tell from dumpsys window policy or lock_settings whether a secure lock is set on this Android version", "serial", req.Serial, "uptime", uptime.Round(time.Minute))
 		return resp, nil
 	}
 	// The old boot_id is the whole proof that the phone went down; without
@@ -86,6 +86,31 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 	s.stateMu.Unlock()
 	slog.Info("rebooted", "serial", req.Serial)
 	return resp, nil
+}
+
+// secureLock is "true" when serial has a PIN, pattern or password, "false"
+// when its lock screen is Swipe or None, and "" when no dump says.
+func (s *Server) secureLock(ctx context.Context, serial string) (string, error) {
+	out, err := s.shell(ctx, serial, "dumpsys window policy")
+	if err != nil {
+		return "", fmt.Errorf("dumpsys window policy: %v", err)
+	}
+	if v := dumpsysField(out, "secure="); v != "" {
+		return v, nil
+	}
+	// Android 17 dropped secure= from the window policy (sair#135).
+	// lock_settings still has the credential type, which the shell can
+	// read: NONE for Swipe or None, else PIN, PATTERN, PASSWORD, ...
+	out, err = s.shell(ctx, serial, "dumpsys lock_settings")
+	if err != nil {
+		return "", fmt.Errorf("dumpsys lock_settings: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "CredentialType:"); ok {
+			return strconv.FormatBool(strings.TrimSpace(v) != "NONE"), nil
+		}
+	}
+	return "", nil
 }
 
 // parseUptime reads /proc/uptime: "<seconds up> <idle seconds>".

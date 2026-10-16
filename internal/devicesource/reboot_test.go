@@ -105,3 +105,27 @@ func TestRebootIfStaleLeavesASecureLockedPhoneUp(t *testing.T) {
 		}
 	}
 }
+
+// Android 17 (Pixel 7, sair#135) has no secure= in the window policy, only
+// simSecure=; dumpsys lock_settings still says whether a credential is set.
+const (
+	policyAndroid17 = "WINDOW MANAGER POLICY STATE (dumpsys window policy)\n    mKeyguardOccluded=false mPendingKeyguardOccluded=false\n    KeyguardServiceDelegate\n      showing=false\n      inputRestricted=false\n      occluded=false\n      trusted=false\n      simSecure=false\n      dreaming=false\n      systemReady=true\n      deviceHasKeyguard=true\n      enabled=true\n      userId=0\n      bootCompleted=true\n"
+	lockSettings    = "Current lock settings service state:\n\nUser State:\n  User 0\n    LSKF-based SP protector ID: 0c48689f69bfe652\n    SID: 0000000000000000\n    Quality: 0\n    CredentialType: %s\n    IsLockScreenDisabled: false\n    IsUseOneLockSettingEnabled: true\n    Metrics: known\n"
+)
+
+func TestSecureLockFallsBackToLockSettings(t *testing.T) {
+	for _, tt := range []struct{ policy, locks, want string }{
+		{policyUnlocked, "", "false"},
+		{policySecure, "", "true"},
+		{policyAndroid17, fmt.Sprintf(lockSettings, "NONE"), "false"},
+		{policyAndroid17, fmt.Sprintf(lockSettings, "PIN"), "true"}, // set and read on a moto g15
+		{policyAndroid17, fmt.Sprintf(lockSettings, "PATTERN"), "true"},
+		{policyAndroid17, "Can't find service: lock_settings\n", ""},
+	} {
+		s := &Server{}
+		fakeShell(s, map[string]string{"dumpsys window policy": tt.policy, "dumpsys lock_settings": tt.locks})
+		if got, err := s.secureLock(context.Background(), "A"); err != nil || got != tt.want {
+			t.Errorf("secureLock(%q, %q) = %q, %v; want %q", tt.policy, tt.locks, got, err, tt.want)
+		}
+	}
+}
