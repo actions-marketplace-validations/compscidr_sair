@@ -180,9 +180,14 @@ message LockHeartbeatResponse {
 
 message CheckKeyRequest {
   string api_key = 1;
+  // The proxy's guest keys (SAIR_GUEST_API_KEYS): api_key is also accepted
+  // when it is on the same account as one of these (sair#131). An older
+  // orchestrator ignores the field and checks the caller's account only.
+  repeated string guest_api_keys = 2;
 }
 
 message CheckKeyResponse {
+  // api_key is on the caller's account, or on a guest key's account.
   bool same_tenant = 1;
 }
 

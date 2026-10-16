@@ -510,12 +510,13 @@ func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, de
 }
 
 // CheckKey asks the orchestrator whether key belongs to this proxy's own
-// account (sair#120). Unimplemented from an orchestrator that predates it
-// is returned as is, so the caller can fall back to its local lists.
-func (r *CommandRouter) CheckKey(key string) (bool, error) {
+// account (sair#120) or to the account of one of guestKeys (sair#131).
+// Unimplemented from an orchestrator that predates it is returned as is, so
+// the caller can fall back to its local lists.
+func (r *CommandRouter) CheckKey(key string, guestKeys []string) (bool, error) {
 	ctx, cancel := r.ctxWithTimeout(10 * time.Second)
 	defer cancel()
-	resp, err := r.orchClient.CheckKey(ctx, &pb.CheckKeyRequest{ApiKey: key})
+	resp, err := r.orchClient.CheckKey(ctx, &pb.CheckKeyRequest{ApiKey: key, GuestApiKeys: guestKeys})
 	if err != nil {
 		return false, err
 	}

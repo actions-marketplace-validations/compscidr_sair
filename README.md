@@ -377,7 +377,7 @@ grpcurl -plaintext localhost:8080 devicesource.DeviceSource/GetDevices
 | `ORCHESTRATOR_ADDR` | `orchestrator.sair.run:9090` | Orchestrator gRPC address (lock management) |
 | `ORCHESTRATOR_TLS` | `false` (auto-enabled for hosted) | Use TLS for orchestrator connection |
 | `SAIR_API_KEY` | `dev-key-123` | API key for authentication |
-| `SAIR_GUEST_API_KEYS` | empty | Comma-separated API keys of **other** accounts allowed to lock this proxy's devices. Every key on the proxy's own account is accepted without being listed. See "Guest tenants" below. |
+| `SAIR_GUEST_API_KEYS` | empty | Comma-separated API keys of **other** accounts allowed to lock this proxy's devices. Every key on the proxy's own account, and every other key on a listed guest's account, is accepted without being listed. See "Guest tenants" below. |
 | `ADB_PROXY_PORT` | `5037` | ADB protocol listen port |
 | `PROXY_HTTP_PORT` | `8550` | HTTP API listen port |
 | `PROXY_HTTP_HOST` | `0.0.0.0` | HTTP API bind address |
@@ -441,7 +441,11 @@ physical phone in one lock domain, so no two can hold it together, and the
 owner's jobs are served before anyone else's when a phone frees up.
 
 A guest key is accepted on every proxy endpoint (`/acquire`, `/release`,
-`/wifi`, `/status`), the same as the owner's key. Any other key is refused.
+`/wifi`, `/status`), the same as the owner's key. So is every other key on
+a listed guest's account: listing one key grants that account, so the guest
+can add or rotate keys without editing the proxy's environment (the listed
+key must stay valid, since it is how the orchestrator finds the account).
+Any other key is refused.
 Guest keys need an orchestrator that understands them; an older one ignores
 the field and records the lock under the owner.
 

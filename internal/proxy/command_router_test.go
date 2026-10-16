@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -26,19 +27,30 @@ type fakeOrchClient struct {
 	clientIP    []string // x-client-ip metadata on the last AcquireLock
 }
 
-// CheckKey answers true for "sibling-key" only, as an orchestrator would for
-// a second key on the proxy's own account.
+// CheckKey answers true for "sibling-key", as an orchestrator would for a
+// second key on the proxy's own account, and for "guest-sibling" when
+// "guest-a" is among the guest keys, as for a second key on a guest's account.
 func (f *fakeOrchClient) CheckKey(ctx context.Context, in *pb.CheckKeyRequest, opts ...grpc.CallOption) (*pb.CheckKeyResponse, error) {
-	return &pb.CheckKeyResponse{SameTenant: in.ApiKey == "sibling-key"}, nil
+	same := in.ApiKey == "sibling-key" || in.ApiKey == "guest-sibling" && slices.Contains(in.GuestApiKeys, "guest-a")
+	return &pb.CheckKeyResponse{SameTenant: same}, nil
 }
 
 func TestCheckKeyAsksTheOrchestrator(t *testing.T) {
 	router := &CommandRouter{orchClient: &fakeOrchClient{}, apiKey: "test-key"}
-	if ok, err := router.CheckKey("sibling-key"); !ok || err != nil {
-		t.Errorf("sibling-key: got (%v, %v), want (true, nil)", ok, err)
+	tests := []struct {
+		key    string
+		guests []string
+		want   bool
+	}{
+		{"sibling-key", nil, true},
+		{"stranger", []string{"guest-a"}, false},
+		{"guest-sibling", []string{"guest-a"}, true},
+		{"guest-sibling", nil, false},
 	}
-	if ok, err := router.CheckKey("stranger"); ok || err != nil {
-		t.Errorf("stranger: got (%v, %v), want (false, nil)", ok, err)
+	for _, tt := range tests {
+		if ok, err := router.CheckKey(tt.key, tt.guests); ok != tt.want || err != nil {
+			t.Errorf("%s with guests %v: got (%v, %v), want (%v, nil)", tt.key, tt.guests, ok, err, tt.want)
+		}
 	}
 }
 
