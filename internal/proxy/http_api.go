@@ -230,11 +230,19 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 
 	repo := r.URL.Query().Get("repo")
 	runURL := r.URL.Query().Get("run_url")
-	sp, err := a.scopedPortManager.Acquire(requestedSerials, int32(count), repo, runURL, int32(priority), wifi, sameProxy, a.tenantKey(r), clientIP(r))
+	sp, err := a.scopedPortManager.Acquire(r.Context(), requestedSerials, int32(count), repo, runURL, int32(priority), wifi, sameProxy, a.tenantKey(r), clientIP(r))
 	if err != nil {
 		code, msg := httpStatusForAcquireError(err)
 		slog.Error("failed to acquire", "error", err, "status", code, "message", msg)
 		writeJSON(w, code, map[string]string{"error": msg})
+		return
+	}
+	// The runner hung up after the grant (or during the device setup after
+	// it): nobody will use this port, so free the devices now rather than at
+	// the idle timeout (sair#133).
+	if r.Context().Err() != nil {
+		slog.Warn("client left before the lock was handed over; releasing", "lockId", sp.LockID)
+		a.scopedPortManager.Release(sp.LockID, "cancelled")
 		return
 	}
 

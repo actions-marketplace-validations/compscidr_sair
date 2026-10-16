@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -134,7 +135,7 @@ func TestAcquireSetsUpDeviceAPI(t *testing.T) {
 		forwards = append(forwards, fmt.Sprintf("%s:%d", serial, port))
 		return nil
 	}
-	sp, err := m.Acquire(nil, 0, "", "", 0, false, false, "", "")
+	sp, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ func TestAcquireSetsUpDeviceAPI(t *testing.T) {
 
 	m.addReverse = func(string, int) error { return errors.New("cannot bind") }
 	fake.resp.LockId = "L2"
-	sp, err = m.Acquire(nil, 0, "", "", 0, false, false, "", "")
+	sp, err = m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +265,7 @@ func TestAcquireCleansUpWhatAnEarlierJobLeft(t *testing.T) {
 		return []string{"com.example.app"}, nil, nil
 	}
 	m.setWifi = func(_ string, state dspb.WifiRequest_State) error { calls = append(calls, state.String()); return nil }
-	sp, err := m.Acquire(nil, 0, "", "", 0, false, false, "", "")
+	sp, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -191,10 +192,11 @@ func NewScopedPortManager(
 // (sair#92); one that stays locked costs the lock the same way.
 //
 // With sameProxy, the orchestrator grants every device from a single proxy.
-// clientIP is the runner's address as this proxy sees it; see AcquireLock.
-func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count int32, repo, runURL string, priority int32, wifi, sameProxy bool, tenantKey, clientIP string) (*ScopedPort, error) {
+// clientIP is the runner's address as this proxy sees it; ctx ends the wait
+// when the runner gives up; see AcquireLock.
+func (m *ScopedPortManager) Acquire(ctx context.Context, requestedSerials map[string]struct{}, count int32, repo, runURL string, priority int32, wifi, sameProxy bool, tenantKey, clientIP string) (*ScopedPort, error) {
 	asked := time.Now()
-	result, err := m.commandRouter.AcquireLock(requestedSerials, count, 30, repo, runURL, priority, sameProxy, tenantKey, clientIP)
+	result, err := m.commandRouter.AcquireLock(ctx, requestedSerials, count, 30, repo, runURL, priority, sameProxy, tenantKey, clientIP)
 	if err != nil {
 		return nil, err
 	}
