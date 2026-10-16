@@ -36,8 +36,8 @@ func (s *Server) SetWifi(ctx context.Context, req *pb.WifiRequest) (*emptypb.Emp
 		// Radio toggled and back on, not associated, no Internet: the next
 		// lock starts from that, not from "it will be shortly" (sair#86).
 		if err = s.wifiForget(ctx, req.Serial); err == nil {
-			if _, err = s.shell(ctx, req.Serial, "svc wifi disable"); err == nil {
-				if _, err = s.shell(ctx, req.Serial, "svc wifi enable"); err == nil {
+			if err = s.svc(ctx, req.Serial, "wifi disable"); err == nil {
+				if err = s.svc(ctx, req.Serial, "wifi enable"); err == nil {
 					err = s.waitFor(ctx, s.wifiOffTimeout, req.Serial+" not back to radio on and offline", func() error {
 						return s.checkOffline(ctx, req.Serial, true)
 					})
@@ -305,7 +305,7 @@ type wifiStatusInfo struct {
 }
 
 func (s *Server) wifiStatus(ctx context.Context, serial string) (wifiStatusInfo, error) {
-	out, err := s.shell(ctx, serial, "cmd wifi status")
+	out, err := s.radioShell(ctx, serial, "cmd wifi status")
 	if err != nil {
 		return wifiStatusInfo{}, fmt.Errorf("cmd wifi status: %w", err)
 	}

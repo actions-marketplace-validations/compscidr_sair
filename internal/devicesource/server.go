@@ -42,6 +42,8 @@ type Server struct {
 	wakeTimeout time.Duration
 	// bluetoothTimeout bounds each half of the Bluetooth cycle (off, back on).
 	bluetoothTimeout time.Duration
+	// radioTimeout bounds one svc toggle or radio state read (see radioShell).
+	radioTimeout time.Duration
 	// rebootAfter is REBOOT_UPTIME_HOURS; 0 disables the uptime reboot.
 	// rebootTimeout bounds the wait for a phone to be back.
 	rebootAfter, rebootTimeout time.Duration

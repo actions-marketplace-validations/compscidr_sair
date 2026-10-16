@@ -41,6 +41,13 @@ service DeviceSource {
   // `dumpsys bluetooth_manager` (Android 4.x); DeadlineExceeded, and the
   // device warning, when the radio does not come back.
   rpc ResetBluetooth(ResetBluetoothRequest) returns (google.protobuf.Empty) {}
+  // Reboot the device if a radio whose reset just failed is wedged: its
+  // service (`dumpsys wifi` / `dumpsys bluetooth_manager`) no longer answers
+  // (sair#139). A phone whose service answers is left up, since some hang on
+  // `svc` with healthy radios. Same rules as RebootIfStale: never a phone
+  // with a secure lock (FailedPrecondition), and the caller holds the reset
+  // lock, re-runs the reset and wakes the phone afterwards.
+  rpc RebootIfWedged(WedgedRadioRequest) returns (RebootResponse) {}
   // Clear a UiAutomation registration a dead session leaked (sair#128),
   // which fails every later instrumentation with "UiAutomationService ...
   // already registered!". Probes with `uiautomator dump`; on a leak kills
@@ -67,6 +74,12 @@ message WakeRequest {
 
 message ResetBluetoothRequest {
   string serial = 1;
+}
+
+message WedgedRadioRequest {
+  string serial = 1;
+  // "wifi" or "bluetooth".
+  string radio = 2;
 }
 
 message RebootRequest {

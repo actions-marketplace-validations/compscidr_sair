@@ -119,6 +119,8 @@ type ScopedPortManager struct {
 	btFresh sync.Map
 	// rebootIfStale is commandRouter.RebootIfStale; tests swap it.
 	rebootIfStale func(serial string) (rebooted bool, uptime time.Duration, err error)
+	// rebootIfWedged is commandRouter.RebootIfWedged; tests swap it.
+	rebootIfWedged func(serial, radio string) (rebooted bool, err error)
 	// event is commandRouter.Event; tests swap it.
 	event func(e *pb.BenchEvent)
 	// recentSourceLog is commandRouter.RecentDeviceSourceLog; tests swap it.
@@ -168,6 +170,7 @@ func NewScopedPortManager(
 		wake:                  commandRouter.Wake,
 		resetBluetooth:        commandRouter.ResetBluetooth,
 		rebootIfStale:         commandRouter.RebootIfStale,
+		rebootIfWedged:        commandRouter.RebootIfWedged,
 		event:                 commandRouter.Event,
 		recentSourceLog:       commandRouter.RecentDeviceSourceLog,
 	}
@@ -508,7 +511,13 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 		m.event(reboot)
 		failed = true
 	}
-	if err := m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET); err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound {
+	err = m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET)
+	resetFailed := func() bool { return err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound }
+	if resetFailed() && m.unwedge(sp, serial, "wifi", "") {
+		rebooted = true
+		err = m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET)
+	}
+	if resetFailed() {
 		slog.Warn("Wi-Fi reset failed", "serial", serial, "lockId", lockID, "error", err)
 		failed = true
 	}
@@ -600,6 +609,10 @@ func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) (fa
 func (m *ScopedPortManager) cycleBluetooth(sp *ScopedPort, serial, note string) (failed bool) {
 	start := time.Now()
 	err := m.resetBluetooth(serial)
+	if c := status.Code(err); err != nil && c != codes.NotFound && c != codes.Unimplemented && m.unwedge(sp, serial, "bluetooth", note) {
+		start = time.Now()
+		err = m.resetBluetooth(serial)
+	}
 	switch c := status.Code(err); {
 	case err == nil:
 		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: fmt.Sprintf("sair: Bluetooth cycled off and on (%s)%s", time.Since(start).Round(100*time.Millisecond), note)})
@@ -608,6 +621,29 @@ func (m *ScopedPortManager) cycleBluetooth(sp *ScopedPort, serial, note string) 
 		slog.Warn("Bluetooth reset failed; the phone may have Bluetooth off", "serial", serial, "lockId", sp.LockID, "error", err)
 		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Bluetooth reset failed: " + errText(err) + note})
 		return true
+	}
+	return false
+}
+
+// unwedge (sair#139) has the device source reboot a phone whose radio
+// reset just failed if the radio's service no longer answers, records that
+// in sp's lock log with note appended, and returns whether it rebooted, so
+// the caller re-runs the reset. The caller holds the serial's lock, so the
+// next acquire waits for the boot.
+func (m *ScopedPortManager) unwedge(sp *ScopedPort, serial, radio, note string) bool {
+	start := time.Now()
+	rebooted, err := m.rebootIfWedged(serial, radio)
+	switch c := status.Code(err); {
+	case err == nil && rebooted:
+		slog.Warn("radio wedged; rebooted", "serial", serial, "lockId", sp.LockID, "radio", radio)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: radio wedged (" + radio + "), rebooted" + note})
+		m.waitForSource(serial)
+		m.event(&pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_REBOOT, Serial: serial, LockId: sp.LockID, Outcome: "ok", Detail: "wedged " + radio, DurationMs: time.Since(start).Milliseconds()})
+		return true
+	case err == nil, c == codes.NotFound, c == codes.Unimplemented:
+	default:
+		slog.Warn("radio wedged; not rebooted", "serial", serial, "lockId", sp.LockID, "radio", radio, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: radio wedged (" + radio + "), not rebooted: " + errText(err) + note})
 	}
 	return false
 }

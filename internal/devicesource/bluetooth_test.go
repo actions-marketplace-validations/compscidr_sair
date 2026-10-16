@@ -192,3 +192,23 @@ func TestBluetoothStateFormats(t *testing.T) {
 		}
 	}
 }
+
+// A phone that hangs on svc with a healthy radio (Galaxy A13) still
+// resets: the bounded svc gives up and the state wait decides (sair#139).
+func TestResetBluetoothGoesByStateWhenSvcHangs(t *testing.T) {
+	s := &Server{bluetoothTimeout: 10 * time.Millisecond, radioTimeout: 10 * time.Millisecond}
+	f := &fakeRadio{state: "ON", onGoesTo: "ON"}
+	f.install(s)
+	radio := s.shell
+	s.shell = func(ctx context.Context, serial, command string) (string, error) {
+		out, err := radio(ctx, serial, command)
+		if strings.HasPrefix(command, "svc ") {
+			<-ctx.Done()
+			return "", ctx.Err()
+		}
+		return out, err
+	}
+	if _, err := s.ResetBluetooth(context.Background(), &pb.ResetBluetoothRequest{Serial: "A"}); err != nil {
+		t.Fatal(err)
+	}
+}

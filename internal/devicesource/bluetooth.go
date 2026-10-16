@@ -36,11 +36,11 @@ func (s *Server) ResetBluetooth(ctx context.Context, req *pb.ResetBluetoothReque
 	}
 	slog.Info("ResetBluetooth", "serial", req.Serial, "state", st)
 
-	_, offErr := s.shell(ctx, req.Serial, "svc bluetooth disable")
+	offErr := s.svc(ctx, req.Serial, "bluetooth disable")
 	if offErr == nil {
 		offErr = s.bluetoothOff(ctx, req.Serial)
 	}
-	_, onErr := s.shell(ctx, req.Serial, "svc bluetooth enable")
+	onErr := s.svc(ctx, req.Serial, "bluetooth enable")
 	if onErr == nil {
 		onErr = s.waitFor(ctx, s.bluetoothTimeout, req.Serial+" Bluetooth not back on", func() error {
 			return s.checkBluetooth(ctx, req.Serial, "ON")
@@ -167,7 +167,7 @@ func (s *Server) checkBluetooth(ctx context.Context, serial string, states ...st
 //
 // A phone without the service at all ("Can't find service") is "" too.
 func (s *Server) bluetoothState(ctx context.Context, serial string) (string, error) {
-	out, err := s.shell(ctx, serial, "dumpsys bluetooth_manager")
+	out, err := s.radioShell(ctx, serial, "dumpsys bluetooth_manager")
 	if err != nil && strings.Contains(out, "Can't find service") {
 		return "", nil
 	}
