@@ -558,6 +558,15 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 		failed = true
 	}
 	m.setUpdates(sp, serial, false)
+	// Back online between leases, or the Play Store is only ever on while
+	// the phone has no network and nothing updates (sair#151). The reset
+	// above already dropped the job's networks; the next acquire turns this
+	// one off again for --no-wifi.
+	if err == nil {
+		if err := m.wifiDevice(lockID, serial, dspb.WifiRequest_ON, ""); err != nil {
+			slog.Warn("rejoining the bench Wi-Fi after release failed; the phone stays offline until its next lease", "serial", serial, "lockId", lockID, "error", err)
+		}
+	}
 	if failed {
 		m.logExcerpt(sp, []string{serial})
 	}

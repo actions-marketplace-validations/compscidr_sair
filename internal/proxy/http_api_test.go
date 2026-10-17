@@ -411,7 +411,7 @@ func TestHTTPApiWifiDeviceToken(t *testing.T) {
 	if got := post(wifi+"&serial=A", sp.DeviceToken); got != http.StatusUnauthorized {
 		t.Errorf("after release: %d", got)
 	}
-	if want := []string{"A ON", "A RESET"}; !slices.Equal(calls, want) {
+	if want := []string{"A ON", "A RESET", "A ON"}; !slices.Equal(calls, want) {
 		t.Errorf("calls = %q, want %q", calls, want)
 	}
 }

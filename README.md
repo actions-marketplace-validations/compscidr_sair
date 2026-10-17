@@ -185,7 +185,9 @@ you:
   every suggestion added through `adb shell` and every saved network is
   forgotten and the radio is toggled, and the reset waits until the phone is
   offline with the radio back on. The next job never inherits the last one's
-  network.
+  network. The phone then rejoins the bench Wi-Fi, so it is online between
+  leases and app updates can install (see the Play Store below); the next
+  acquire puts it in the state that job asked for either way.
 - **Also on release**, every third-party package the phone did not have when
   the device source first saw it is uninstalled (test APKs and `.test`
   packages included, with their app data and signed-in accounts), and the
@@ -250,7 +252,8 @@ you:
   (Android 4.x) are skipped.
 - **No Play Store updates during a lease**: on acquire the Play Store is
   disabled (`pm disable-user com.android.vending`) and on release it is
-  enabled again, so updates install between leases. An update of Google
+  enabled again, so updates install between leases, when the phone is back
+  on the bench Wi-Fi (or mobile data). An update of Google
   Play services force-stops every app that uses it, the app under
   instrumentation included, which fails a job with `Process crashed`. The
   lock log gets `sair: Play Store disabled for the lease`. A phone that

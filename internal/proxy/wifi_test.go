@@ -55,7 +55,7 @@ func TestScopedPortWifi(t *testing.T) {
 	m.CloseScopedPort("L1")
 	m.CloseScopedPort("L2")
 
-	want := []string{"A ON", "A unreverse", "A RESET"}
+	want := []string{"A ON", "A unreverse", "A RESET", "A ON"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Errorf("calls = %q, want %q", calls, want)
 	}
@@ -247,7 +247,7 @@ func TestCloseResetsPackagesBeforeWifiAndLogsIt(t *testing.T) {
 	if entries := sp.Log.DrainAll(); len(entries) != 0 {
 		t.Errorf("Unimplemented reset logged %v", entries)
 	}
-	want := []string{"A unreverse", "A packages", "A RESET", "B unreverse", "B packages", "B RESET"}
+	want := []string{"A unreverse", "A packages", "A RESET", "A ON", "B unreverse", "B packages", "B RESET", "B ON"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Errorf("calls = %q, want %q", calls, want)
 	}

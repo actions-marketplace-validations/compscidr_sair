@@ -416,7 +416,7 @@ func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 	}
 	steps = nil
 	m.Release("L1", "ok")
-	want := []string{"packages", "uiautomation", "reboot", "wifi RESET", "wake"}
+	want := []string{"packages", "uiautomation", "reboot", "wifi RESET", "wake", "wifi ON"}
 	if !reflect.DeepEqual(steps, want) {
 		t.Errorf("release steps = %q, want %q", steps, want)
 	}
@@ -463,7 +463,7 @@ func TestPlayStoreHeldForTheLease(t *testing.T) {
 	}
 	steps = nil
 	m.Release("L1", "ok")
-	if want := []string{"wifi RESET", "bluetooth", "wake", "hold false"}; !reflect.DeepEqual(steps, want) {
+	if want := []string{"wifi RESET", "bluetooth", "wake", "hold false", "wifi ON"}; !reflect.DeepEqual(steps, want) {
 		t.Errorf("release steps = %q, want %q", steps, want)
 	}
 	var lines []string
@@ -502,7 +502,7 @@ func TestBluetoothCycledOnReleaseAndOnAcquireOnlyWhenNeeded(t *testing.T) {
 	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return nil }
 	steps = nil
 	m.Release("L1", "ok")
-	if want := []string{"wifi RESET", "bluetooth", "wake"}; !reflect.DeepEqual(steps, want) {
+	if want := []string{"wifi RESET", "bluetooth", "wake", "wifi ON"}; !reflect.DeepEqual(steps, want) {
 		t.Errorf("release steps = %q, want %q", steps, want)
 	}
 	var lines []string
@@ -587,8 +587,8 @@ func TestReleaseRebootsAWedgedRadioAndResetsAgain(t *testing.T) {
 		steps, wedged = nil, true
 		m.Release("L1", "ok")
 		want := map[string][]string{
-			"wifi":      {"wifi RESET", "unwedge wifi", "wifi RESET"},
-			"bluetooth": {"wifi RESET", "bluetooth", "unwedge bluetooth", "bluetooth"},
+			"wifi":      {"wifi RESET", "unwedge wifi", "wifi RESET", "wifi ON"},
+			"bluetooth": {"wifi RESET", "bluetooth", "unwedge bluetooth", "bluetooth", "wifi ON"},
 		}[radio]
 		if !reflect.DeepEqual(steps, want) {
 			t.Errorf("%s: release steps = %q, want %q", radio, steps, want)
