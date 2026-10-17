@@ -70,6 +70,7 @@ func NewHTTPApi(scopedPortManager *ScopedPortManager, deviceListTracker *DeviceL
 	mux.HandleFunc("POST /acquire", api.handleAcquire)
 	mux.HandleFunc("POST /release", api.handleRelease)
 	mux.HandleFunc("POST /wifi", api.handleWifi)
+	mux.HandleFunc("POST /label", api.handleLabel)
 	mux.HandleFunc("GET /status", api.handleStatus)
 	mux.HandleFunc("POST /internal/devices", api.handleRegisterDevices)
 
@@ -235,9 +236,26 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 		sameProxy = parsed
 	}
 
-	repo := r.URL.Query().Get("repo")
-	runURL := r.URL.Query().Get("run_url")
-	sp, err := a.scopedPortManager.Acquire(r.Context(), requestedSerials, int32(count), repo, runURL, int32(priority), wifi, wifiBand, sameProxy, a.tenantKey(r), clientIP(r))
+	q := r.URL.Query()
+	var runAttempt int64
+	if v := q.Get("run_attempt"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 32)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "run_attempt parameter must be a 32-bit integer"})
+			return
+		}
+		runAttempt = parsed
+	}
+	labels, err := parseLabels(q["label"])
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	job := &pb.AcquireLockRequest{
+		Repo: q.Get("repo"), RunUrl: q.Get("run_url"), Job: q.Get("job"), RunAttempt: int32(runAttempt),
+		Sha: q.Get("sha"), Workflow: q.Get("workflow"), Stage: q.Get("stage"), Labels: labels,
+	}
+	sp, err := a.scopedPortManager.Acquire(r.Context(), requestedSerials, int32(count), job, int32(priority), wifi, wifiBand, sameProxy, a.tenantKey(r), clientIP(r))
 	if err != nil {
 		code, msg := httpStatusForAcquireError(err)
 		slog.Error("failed to acquire", "error", err, "status", code, "message", msg)
@@ -310,6 +328,79 @@ func (a *HTTPApi) handleRelease(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "released"})
 	} else {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown lock_id"})
+	}
+}
+
+// Label caps, per request. The orchestrator stores what it is sent, so the
+// proxy keeps a runaway client from filling a job record.
+const (
+	maxLabels        = 32
+	maxLabelKeyLen   = 64
+	maxLabelValueLen = 256
+)
+
+// parseLabels reads label parameters: "k=v" for the lock, or "SERIAL:k=v"
+// for one of its devices. The serial is split off at the last ':' before the
+// '=', since TCP serials (host:port) have one; keys cannot.
+func parseLabels(params []string) ([]*pb.Label, error) {
+	if len(params) > maxLabels {
+		return nil, fmt.Errorf("at most %d labels per request", maxLabels)
+	}
+	labels := make([]*pb.Label, 0, len(params))
+	for _, p := range params {
+		left, value, ok := strings.Cut(p, "=")
+		if !ok {
+			return nil, fmt.Errorf("label %q must be k=v or SERIAL:k=v", p)
+		}
+		var serial string
+		key := left
+		if i := strings.LastIndex(left, ":"); i >= 0 {
+			serial, key = left[:i], left[i+1:]
+		}
+		if key == "" || (serial == "" && strings.Contains(left, ":")) {
+			return nil, fmt.Errorf("label %q must be k=v or SERIAL:k=v", p)
+		}
+		if len(key) > maxLabelKeyLen || len(value) > maxLabelValueLen {
+			return nil, fmt.Errorf("label %q: key is at most %d bytes, value at most %d", p, maxLabelKeyLen, maxLabelValueLen)
+		}
+		labels = append(labels, &pb.Label{Serial: serial, Key: key, Value: value})
+	}
+	return labels, nil
+}
+
+// handleLabel adds labels to a held lock, for roles a client only knows once
+// it has the serials (sair#141).
+func (a *HTTPApi) handleLabel(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAuth(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing x-api-key header"})
+		return
+	}
+	lockID := r.URL.Query().Get("lock_id")
+	if lockID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lock_id parameter required"})
+		return
+	}
+	labels, err := parseLabels(r.URL.Query()["label"])
+	if err == nil && len(labels) == 0 {
+		err = errors.New("label parameter required")
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	err = a.scopedPortManager.AddLabels(lockID, labels)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	case errors.Is(err, errUnknownLock):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+	case errors.Is(err, errNotInLock):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+	default:
+		code, msg := httpStatusForAcquireError(err)
+		slog.Error("adding labels failed", "lockId", lockID, "error", err)
+		writeJSON(w, code, map[string]string{"error": msg})
 	}
 }
 

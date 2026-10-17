@@ -522,11 +522,13 @@ var (
 // is a guest key the lock is attributed to; empty means the owner's own lock.
 // clientIP, when set, is the caller's address as the proxy sees it; the
 // orchestrator records it as where the key was last used from
-// (sair-orchestrator#705). Older orchestrators ignore it.
+// (sair-orchestrator#705). Older orchestrators ignore it. job carries what
+// the lock is for (repo, run URL, CI job, labels) and may be nil; its other
+// fields are ignored.
 //
 // Cancelling ctx (the runner hung up while queued) cancels the call, and the
 // orchestrator drops the waiter instead of granting it a lock (sair#133).
-func (r *CommandRouter) AcquireLock(parent context.Context, serials map[string]struct{}, count int32, deadlineMinutes int64, repo, runURL string, priority int32, sameProxy bool, tenantKey, clientIP string) (*LockResult, error) {
+func (r *CommandRouter) AcquireLock(parent context.Context, serials map[string]struct{}, count int32, deadlineMinutes int64, job *pb.AcquireLockRequest, priority int32, sameProxy bool, tenantKey, clientIP string) (*LockResult, error) {
 	if count < 0 {
 		return nil, fmt.Errorf("count must not be negative: %d", count)
 	}
@@ -542,7 +544,11 @@ func (r *CommandRouter) AcquireLock(parent context.Context, serials map[string]s
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-client-ip", clientIP)
 	}
 
-	req := &pb.AcquireLockRequest{Repo: repo, Count: count, RunUrl: runURL, ProxyId: r.proxyID, Priority: priority, SameProxy: sameProxy, TenantApiKey: tenantKey}
+	req := &pb.AcquireLockRequest{
+		Repo: job.GetRepo(), RunUrl: job.GetRunUrl(), Job: job.GetJob(), RunAttempt: job.GetRunAttempt(),
+		Sha: job.GetSha(), Workflow: job.GetWorkflow(), Stage: job.GetStage(), Labels: job.GetLabels(),
+		Count: count, ProxyId: r.proxyID, Priority: priority, SameProxy: sameProxy, TenantApiKey: tenantKey,
+	}
 	for s := range serials {
 		req.Serials = append(req.Serials, s)
 	}
@@ -596,6 +602,15 @@ func (r *CommandRouter) CheckKey(key string, guestKeys []string) (bool, error) {
 		return false, err
 	}
 	return resp.SameTenant, nil
+}
+
+// AddLockLabels labels a held lock or its devices. Unimplemented from an
+// orchestrator that predates it is returned as is.
+func (r *CommandRouter) AddLockLabels(lockID string, labels []*pb.Label) error {
+	ctx, cancel := r.ctxWithTimeout(10 * time.Second)
+	defer cancel()
+	_, err := r.orchClient.AddLockLabels(ctx, &pb.AddLockLabelsRequest{LockId: lockID, Labels: labels})
+	return err
 }
 
 // ReleaseLock releases a lock, reporting the job outcome so the orchestrator

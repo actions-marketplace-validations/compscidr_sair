@@ -35,7 +35,7 @@ func TestAcquireWifiFailureSendsEventsAndExcerpt(t *testing.T) {
 		return nil
 	}
 
-	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, true, "", false, "", ""); err == nil {
+	if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, true, "", false, "", ""); err == nil {
 		t.Fatal("acquire succeeded with a phone off the Wi-Fi")
 	}
 
