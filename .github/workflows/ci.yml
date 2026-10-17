@@ -87,6 +87,7 @@ jobs:
           command -v sair-acquire
           command -v sair-release
           command -v sair-wifi
+          command -v sair-label
 
       # Only checks the proxy comes up: the fake key never gets a lock.
       - uses: ./
