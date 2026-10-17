@@ -101,7 +101,7 @@ type ScopedPortManager struct {
 	flushInterval time.Duration
 	scopedPorts   map[string]*ScopedPort
 	// setWifi is commandRouter.SetWifi; tests swap it.
-	setWifi func(serial string, state dspb.WifiRequest_State) error
+	setWifi func(serial string, state dspb.WifiRequest_State, band string) error
 	// removeReverse is commandRouter.RemoveReverseForwards; tests swap it.
 	removeReverse func(serial string) error
 	// addReverse is commandRouter.AddReverseForward; tests swap it.
@@ -192,7 +192,8 @@ func NewScopedPortManager(
 // before Acquire returns; without it, every local device is verified offline
 // first rather than trusting the previous release's reset (sair#86). Either
 // way a device that cannot be put in that state releases the lock and
-// returns the error. A bench without managed Wi-Fi skips this.
+// returns the error. A bench without managed Wi-Fi skips this. wifiBand
+// (with wifi) is SetWifi's band.
 //
 // Every local device is also awake with its keyguard dismissed, verified
 // (sair#92); one that stays locked costs the lock the same way.
@@ -200,7 +201,7 @@ func NewScopedPortManager(
 // With sameProxy, the orchestrator grants every device from a single proxy.
 // clientIP is the runner's address as this proxy sees it; ctx ends the wait
 // when the runner gives up; see AcquireLock.
-func (m *ScopedPortManager) Acquire(ctx context.Context, requestedSerials map[string]struct{}, count int32, repo, runURL string, priority int32, wifi, sameProxy bool, tenantKey, clientIP string) (*ScopedPort, error) {
+func (m *ScopedPortManager) Acquire(ctx context.Context, requestedSerials map[string]struct{}, count int32, repo, runURL string, priority int32, wifi bool, wifiBand string, sameProxy bool, tenantKey, clientIP string) (*ScopedPort, error) {
 	asked := time.Now()
 	result, err := m.commandRouter.AcquireLock(ctx, requestedSerials, count, 30, repo, runURL, priority, sameProxy, tenantKey, clientIP)
 	if err != nil {
@@ -238,7 +239,7 @@ func (m *ScopedPortManager) Acquire(ctx context.Context, requestedSerials map[st
 		}
 	}
 	m.setupDeviceAPI(sp)
-	if err := m.SetWifi(sp.LockID, nil, wifi); err != nil && !wifiUnmanaged(err) {
+	if err := m.SetWifi(sp.LockID, nil, wifi, wifiBand); err != nil && !wifiUnmanaged(err) {
 		m.acquireFailed(sp, "wifi_failed", err, asked, granted)
 		return nil, err
 	}
@@ -337,9 +338,9 @@ var wifiEventKinds = map[dspb.WifiRequest_State]pb.BenchEventKind{
 }
 
 // wifiDevice is setWifi plus its WIFI_* event, on a bench that manages Wi-Fi.
-func (m *ScopedPortManager) wifiDevice(lockID, serial string, state dspb.WifiRequest_State) error {
+func (m *ScopedPortManager) wifiDevice(lockID, serial string, state dspb.WifiRequest_State, band string) error {
 	start := time.Now()
-	err := m.setWifi(serial, state)
+	err := m.setWifi(serial, state, band)
 	if !wifiUnmanaged(err) {
 		m.event(&pb.BenchEvent{
 			Kind: wifiEventKinds[state], Serial: serial, LockId: lockID, Outcome: wifiOutcome(err), Detail: errText(err),
@@ -418,8 +419,9 @@ var (
 
 // SetWifi turns Wi-Fi on or off for serials of a lock, or for all of its
 // local devices when serials is empty. Devices relayed from another proxy are
-// not supported: naming one is an error, and "all" skips them.
-func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) error {
+// not supported: naming one is an error, and "all" skips them. band ("2.4",
+// "5", "6", or "" for any) pins the GHz band a phone joins on (sair#143).
+func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool, band string) error {
 	m.mu.Lock()
 	sp := m.scopedPorts[lockID]
 	m.mu.Unlock()
@@ -451,7 +453,7 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 			mu := m.wifiLock(s)
 			mu.Lock()
 			defer mu.Unlock()
-			errs[i] = m.wifiDevice(lockID, s, state)
+			errs[i] = m.wifiDevice(lockID, s, state, band)
 		})
 	}
 	wg.Wait()
@@ -511,11 +513,11 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 		m.event(reboot)
 		failed = true
 	}
-	err = m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET)
+	err = m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET, "")
 	resetFailed := func() bool { return err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound }
 	if resetFailed() && m.unwedge(sp, serial, "wifi", "") {
 		rebooted = true
-		err = m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET)
+		err = m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET, "")
 	}
 	if resetFailed() {
 		slog.Warn("Wi-Fi reset failed", "serial", serial, "lockId", lockID, "error", err)

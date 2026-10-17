@@ -124,7 +124,9 @@ func TestAdbReverseThroughScopedPort(t *testing.T) {
 		ResolveSource: tracker.GetSourceAddr,
 	}
 	m := NewScopedPortManager(r, tracker, 3600)
-	m.setWifi = func(string, dspb.WifiRequest_State) error { return status.Error(codes.FailedPrecondition, "unmanaged") }
+	m.setWifi = func(string, dspb.WifiRequest_State, string) error {
+		return status.Error(codes.FailedPrecondition, "unmanaged")
+	}
 	sp, err := m.CreateScopedPort("L1", map[string]struct{}{"SER": {}}, nil)
 	if err != nil {
 		t.Fatal(err)

@@ -28,7 +28,10 @@ func (s *Server) SetWifi(ctx context.Context, req *pb.WifiRequest) (*emptypb.Emp
 	if s.wifiSSID == "" {
 		return nil, status.Error(codes.FailedPrecondition, "WIFI_SSID is not set on the device source; Wi-Fi is not managed on this bench")
 	}
-	slog.Info("SetWifi", "serial", req.Serial, "state", req.State)
+	if _, ok := wifiBands[req.Band]; req.Band != "" && (!ok || req.State != pb.WifiRequest_ON) {
+		return nil, status.Errorf(codes.InvalidArgument, "Wi-Fi band %q: want 2.4, 5 or 6, and only with ON", req.Band)
+	}
+	slog.Info("SetWifi", "serial", req.Serial, "state", req.State, "band", req.Band)
 
 	var err error
 	switch req.State {
@@ -51,7 +54,7 @@ func (s *Server) SetWifi(ctx context.Context, req *pb.WifiRequest) (*emptypb.Emp
 			})
 		}
 	case pb.WifiRequest_ON:
-		err = s.wifiConnect(ctx, req.Serial)
+		err = s.wifiConnect(ctx, req.Serial, req.Band)
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown Wi-Fi state %d", req.State)
 	}
@@ -88,11 +91,19 @@ func (s *Server) wifiForget(ctx context.Context, serial string) error {
 
 // wifiConnect suggests the bench network and waits until the device is
 // online on it (see checkOnline), so a job never gets a phone that is still
-// associating, or one that answers a ping over some other network.
-func (s *Server) wifiConnect(ctx context.Context, serial string) error {
+// associating, or one that answers a ping over some other network. With a
+// band the suggestion is pinned to one BSSID in it (sair#143).
+func (s *Server) wifiConnect(ctx context.Context, serial, band string) error {
 	add := "cmd wifi add-suggestion " + shellQuote(s.wifiSSID) + " open"
 	if s.wifiPassphrase != "" {
 		add = "cmd wifi add-suggestion " + shellQuote(s.wifiSSID) + " wpa2 " + shellQuote(s.wifiPassphrase)
+	}
+	if band != "" {
+		bssid, err := s.wifiPickBSSID(ctx, serial, band)
+		if err != nil {
+			return err
+		}
+		add += " -b " + shellQuote(bssid)
 	}
 	if _, err := s.shell(ctx, serial, add); err != nil {
 		return fmt.Errorf("add suggestion: %w", err)
@@ -110,6 +121,77 @@ func (s *Server) wifiConnect(ctx context.Context, serial string) error {
 		s.recordJoin(serial, time.Since(start), err, last)
 	}
 	return err
+}
+
+// wifiBands are the frequency ranges, in MHz, of WifiRequest.band.
+var wifiBands = map[string][2]int{"2.4": {2400, 2500}, "5": {4900, 5900}, "6": {5925, 7125}}
+
+// wifiPickBSSID scans until the phone sees the bench SSID in band and
+// returns its strongest BSSID there, waiting up to wifiTimeout for one.
+func (s *Server) wifiPickBSSID(ctx context.Context, serial, band string) (string, error) {
+	if _, err := s.shell(ctx, serial, "cmd wifi start-scan"); err != nil {
+		return "", fmt.Errorf("start scan: %w", err)
+	}
+	var best scanResult
+	err := s.waitFor(ctx, s.wifiTimeout, fmt.Sprintf("%s does not see Wi-Fi %q on %s GHz", serial, s.wifiSSID, band), func() error {
+		out, err := s.shell(ctx, serial, "cmd wifi list-scan-results")
+		if err != nil {
+			return fmt.Errorf("list-scan-results: %w", err)
+		}
+		r := wifiBands[band]
+		best = scanResult{}
+		for _, sr := range parseScanResults(out) {
+			if sr.ssid == s.wifiSSID && sr.freq >= r[0] && sr.freq <= r[1] && (best.bssid == "" || sr.rssi > best.rssi) {
+				best = sr
+			}
+		}
+		if best.bssid == "" {
+			return errors.New("not in the scan results yet")
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	slog.Info("Wi-Fi band pinned", "serial", serial, "band", band, "bssid", best.bssid, "frequencyMhz", best.freq, "rssi", best.rssi)
+	return best.bssid, nil
+}
+
+type scanResult struct {
+	bssid      string
+	freq, rssi int
+	ssid       string
+}
+
+// parseScanResults reads `cmd wifi list-scan-results` (a hidden network has
+// no SSID, so its flags come straight after the age):
+//
+//	  BSSID              Frequency      RSSI           Age(sec)     SSID                                 Flags
+//	aa:bb:cc:dd:ee:ff       2462        -49              1.220    bench net                         [WPA2-PSK-CCMP-128][RSN-PSK-CCMP-128][ESS]
+func parseScanResults(out string) []scanResult {
+	var rs []scanResult
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || strings.Count(f[0], ":") != 5 {
+			continue
+		}
+		freq, err1 := strconv.Atoi(f[1])
+		rssi, err2 := strconv.Atoi(f[2])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		var ssid []string
+		for _, w := range f[4:] {
+			if strings.HasPrefix(w, "[") {
+				break
+			}
+			ssid = append(ssid, w)
+		}
+		// ponytail: runs of spaces inside an SSID collapse to one; read
+		// the column offsets from the header if a bench SSID ever has them.
+		rs = append(rs, scanResult{bssid: f[0], freq: freq, rssi: rssi, ssid: strings.Join(ssid, " ")})
+	}
+	return rs
 }
 
 // wifiStats is one phone's Wi-Fi ON outcomes since the device source started

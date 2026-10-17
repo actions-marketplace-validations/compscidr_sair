@@ -176,7 +176,11 @@ you:
 - **On acquire** each phone joins the bench Wi-Fi and the acquire returns only
   once the phone is *online* (below); it fails otherwise. `--no-wifi` hands it
   over *offline* instead, verified the same way rather than trusting the
-  previous release.
+  previous release. `--wifi-band 2.4|5|6` (also `sair-wifi on --band`) joins
+  on that GHz band: the phone scans, the suggestion is pinned to the
+  strongest BSSID of `WIFI_SSID` it sees in the band, and the join fails if
+  it sees none. The phone's `cmd wifi status` shows the BSSID and frequency
+  it joined.
 - **On release**, and when a lock expires or is cancelled, each phone is reset:
   every suggestion added through `adb shell` and every saved network is
   forgotten and the radio is toggled, and the reset waits until the phone is
@@ -539,9 +543,13 @@ eval $(sair-acquire --priority -1)
 # Phones verified offline (default: joined to the bench Wi-Fi and online)
 eval $(sair-acquire --no-wifi)
 
+# Join the bench Wi-Fi on one band of a dual/tri-band AP (2.4, 5 or 6 GHz)
+eval $(sair-acquire --wifi-band 2.4)
+
 # Drop and restore the network mid-job (all locked devices, or --serial)
 sair-wifi off
 sair-wifi on
+sair-wifi on --band 5
 
 # Which release the tools (or a bench's binaries) came from
 sair-acquire --version

@@ -216,6 +216,13 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// wifi_band=2.4|5|6 joins each phone on that GHz band of the bench Wi-Fi.
+	wifiBand := r.URL.Query().Get("wifi_band")
+	if !validWifiBand(wifiBand) || (wifiBand != "" && !wifi) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "wifi_band parameter must be 2.4, 5 or 6, with wifi on"})
+		return
+	}
+
 	// same_proxy=true takes every device from one proxy, for phones that must
 	// sit together; the orchestrator does the picking.
 	sameProxy := false
@@ -230,7 +237,7 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 
 	repo := r.URL.Query().Get("repo")
 	runURL := r.URL.Query().Get("run_url")
-	sp, err := a.scopedPortManager.Acquire(r.Context(), requestedSerials, int32(count), repo, runURL, int32(priority), wifi, sameProxy, a.tenantKey(r), clientIP(r))
+	sp, err := a.scopedPortManager.Acquire(r.Context(), requestedSerials, int32(count), repo, runURL, int32(priority), wifi, wifiBand, sameProxy, a.tenantKey(r), clientIP(r))
 	if err != nil {
 		code, msg := httpStatusForAcquireError(err)
 		slog.Error("failed to acquire", "error", err, "status", code, "message", msg)
@@ -319,6 +326,12 @@ func parseWifiState(v string, def bool) (on, ok bool) {
 	return false, false
 }
 
+// validWifiBand reports whether v is a WifiRequest.band the device source
+// takes; "" is any band.
+func validWifiBand(v string) bool {
+	return v == "" || v == "2.4" || v == "5" || v == "6"
+}
+
 // handleWifi turns Wi-Fi on or off on a lock's devices mid-job, using the
 // bench network so the job never needs the credentials.
 //
@@ -347,6 +360,11 @@ func (a *HTTPApi) handleWifi(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "state parameter must be on or off"})
 		return
 	}
+	band := q.Get("band")
+	if !validWifiBand(band) || (band != "" && !on) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "band parameter must be 2.4, 5 or 6, with state on"})
+		return
+	}
 	var serials []string
 	for _, s := range strings.Split(q.Get("serial"), ",") {
 		if s = strings.TrimSpace(s); s != "" {
@@ -354,7 +372,7 @@ func (a *HTTPApi) handleWifi(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err := a.scopedPortManager.SetWifi(lockID, serials, on)
+	err := a.scopedPortManager.SetWifi(lockID, serials, on, band)
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
