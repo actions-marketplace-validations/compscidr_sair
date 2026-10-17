@@ -479,7 +479,7 @@ physical phone in one lock domain, so no two can hold it together, and the
 owner's jobs are served before anyone else's when a phone frees up.
 
 A guest key is accepted on every proxy endpoint (`/acquire`, `/release`,
-`/wifi`, `/status`), the same as the owner's key. So is every other key on
+`/wifi`, `/label`, `/status`), the same as the owner's key. So is every other key on
 a listed guest's account: listing one key grants that account, so the guest
 can add or rotate keys without editing the proxy's environment (the listed
 key must stay valid, since it is how the orchestrator finds the account).

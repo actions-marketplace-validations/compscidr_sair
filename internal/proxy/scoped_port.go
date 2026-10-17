@@ -201,9 +201,9 @@ func NewScopedPortManager(
 // With sameProxy, the orchestrator grants every device from a single proxy.
 // clientIP is the runner's address as this proxy sees it; ctx ends the wait
 // when the runner gives up; see AcquireLock.
-func (m *ScopedPortManager) Acquire(ctx context.Context, requestedSerials map[string]struct{}, count int32, repo, runURL string, priority int32, wifi bool, wifiBand string, sameProxy bool, tenantKey, clientIP string) (*ScopedPort, error) {
+func (m *ScopedPortManager) Acquire(ctx context.Context, requestedSerials map[string]struct{}, count int32, job *pb.AcquireLockRequest, priority int32, wifi bool, wifiBand string, sameProxy bool, tenantKey, clientIP string) (*ScopedPort, error) {
 	asked := time.Now()
-	result, err := m.commandRouter.AcquireLock(ctx, requestedSerials, count, 30, repo, runURL, priority, sameProxy, tenantKey, clientIP)
+	result, err := m.commandRouter.AcquireLock(ctx, requestedSerials, count, 30, job, priority, sameProxy, tenantKey, clientIP)
 	if err != nil {
 		return nil, err
 	}
@@ -416,6 +416,23 @@ var (
 	errUnknownLock = errors.New("unknown lock_id")
 	errNotInLock   = errors.New("serial is not part of this lock")
 )
+
+// AddLabels forwards labels for a lock this proxy holds; a per-serial label
+// must name one of the lock's devices.
+func (m *ScopedPortManager) AddLabels(lockID string, labels []*pb.Label) error {
+	m.mu.Lock()
+	sp := m.scopedPorts[lockID]
+	m.mu.Unlock()
+	if sp == nil {
+		return errUnknownLock
+	}
+	for _, l := range labels {
+		if _, ok := sp.Serials[l.Serial]; l.Serial != "" && !ok {
+			return fmt.Errorf("%w: %s", errNotInLock, l.Serial)
+		}
+	}
+	return m.commandRouter.AddLockLabels(lockID, labels)
+}
 
 // SetWifi turns Wi-Fi on or off for serials of a lock, or for all of its
 // local devices when serials is empty. Devices relayed from another proxy are
