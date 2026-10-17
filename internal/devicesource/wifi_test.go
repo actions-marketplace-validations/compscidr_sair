@@ -191,3 +191,40 @@ func TestWifiJoinStats(t *testing.T) {
 		t.Errorf("not associated hint %q", h)
 	}
 }
+
+// A band pins the suggestion to the strongest BSSID of the bench SSID in it,
+// fails clearly when the phone does not see one, and is refused off ON (sair#143).
+func TestSetWifiPinsBand(t *testing.T) {
+	scan := "    BSSID              Frequency      RSSI           Age(sec)     SSID                                 Flags\n" +
+		"  00:00:00:00:00:01       2412        -70              1.220    it's here                         [WPA2-PSK-CCMP-128][ESS]\n" +
+		"  00:00:00:00:00:02       2462        -50              1.220    it's here                         [WPA2-PSK-CCMP-128][ESS]\n" +
+		"  00:00:00:00:00:03       2437        -20              1.220    Cafe                              [ESS]\n" +
+		"  00:00:00:00:00:04       2437        -10              1.362                                      [ESS]\n" +
+		"  00:00:00:00:00:05       5180        -30              1.220    it's here                         [WPA2-PSK-CCMP-128][ESS]\n"
+	newServer := func() (*Server, *[]string) {
+		s := &Server{wifiSSID: "it's here", wifiPassphrase: "pw", wifiPingHost: "dns.google", wifiTimeout: time.Millisecond}
+		return s, fakeShell(s, map[string]string{"cmd wifi list-scan-results": scan, "cmd wifi status": statusConnected, "dumpsys connectivity": connectivityWifi})
+	}
+
+	s, cmds := newServer()
+	if _, err := s.SetWifi(context.Background(), &pb.WifiRequest{Serial: "ABC", State: pb.WifiRequest_ON, Band: "2.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if want := `cmd wifi add-suggestion 'it'\''s here' wpa2 'pw' -b '00:00:00:00:00:02'`; !slices.Contains(*cmds, want) {
+		t.Errorf("commands %q, want %q", *cmds, want)
+	}
+
+	s, _ = newServer()
+	_, err := s.SetWifi(context.Background(), &pb.WifiRequest{Serial: "ABC", State: pb.WifiRequest_ON, Band: "6"})
+	if status.Code(err) != codes.DeadlineExceeded || !strings.Contains(err.Error(), `does not see Wi-Fi "it's here" on 6 GHz`) {
+		t.Errorf("6 GHz not in range: err = %v", err)
+	}
+
+	for _, req := range []*pb.WifiRequest{{State: pb.WifiRequest_ON, Band: "60"}, {State: pb.WifiRequest_OFF, Band: "5"}} {
+		s, cmds = newServer()
+		req.Serial = "ABC"
+		if _, err := s.SetWifi(context.Background(), req); status.Code(err) != codes.InvalidArgument || len(*cmds) != 0 {
+			t.Errorf("%v: err = %v, cmds = %q; want InvalidArgument and no commands", req, err, *cmds)
+		}
+	}
+}

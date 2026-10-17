@@ -18,7 +18,7 @@ import (
 func TestScopedPortWifi(t *testing.T) {
 	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
 	var calls []string
-	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+	m.setWifi = func(serial string, state dspb.WifiRequest_State, _ string) error {
 		calls = append(calls, serial+" "+state.String())
 		return nil
 	}
@@ -38,13 +38,13 @@ func TestScopedPortWifi(t *testing.T) {
 	}
 
 	// "All" skips the relayed device; naming a serial outside the lock is refused.
-	if err := m.SetWifi("L1", nil, true); err != nil {
+	if err := m.SetWifi("L1", nil, true, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.SetWifi("L1", []string{"B"}, false); !errors.Is(err, errNotInLock) {
+	if err := m.SetWifi("L1", []string{"B"}, false, ""); !errors.Is(err, errNotInLock) {
 		t.Errorf("serial outside lock: err = %v", err)
 	}
-	if err := m.SetWifi("nope", nil, false); !errors.Is(err, errUnknownLock) {
+	if err := m.SetWifi("nope", nil, false, ""); !errors.Is(err, errUnknownLock) {
 		t.Errorf("unknown lock: err = %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestScopedPortWifiFansOutPerDevice(t *testing.T) {
 	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
 	var barrier sync.WaitGroup
 	barrier.Add(2)
-	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+	m.setWifi = func(serial string, state dspb.WifiRequest_State, _ string) error {
 		barrier.Done()
 		barrier.Wait()
 		return nil
@@ -77,7 +77,7 @@ func TestScopedPortWifiFansOutPerDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- m.SetWifi("L1", nil, true) }()
+	go func() { done <- m.SetWifi("L1", nil, true, "") }()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -91,7 +91,7 @@ func TestScopedPortWifiFansOutPerDevice(t *testing.T) {
 	release := make(chan struct{})
 	var order []string
 	var mu sync.Mutex
-	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+	m.setWifi = func(serial string, state dspb.WifiRequest_State, _ string) error {
 		if state == dspb.WifiRequest_ON {
 			<-release
 		}
@@ -101,10 +101,10 @@ func TestScopedPortWifiFansOutPerDevice(t *testing.T) {
 		return nil
 	}
 	first := make(chan error, 1)
-	go func() { first <- m.SetWifi("L1", []string{"A"}, true) }()
+	go func() { first <- m.SetWifi("L1", []string{"A"}, true, "") }()
 	time.Sleep(50 * time.Millisecond) // let the ON take A's lock before the OFF asks for it
 	second := make(chan error, 1)
-	go func() { second <- m.SetWifi("L1", []string{"A"}, false) }()
+	go func() { second <- m.SetWifi("L1", []string{"A"}, false, "") }()
 	select {
 	case <-second:
 		t.Fatal("OFF on A ran while ON on A was still in progress")
@@ -129,13 +129,13 @@ func TestAcquireSetsUpDeviceAPI(t *testing.T) {
 	}}
 	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
 	m.DeviceAPIPort = 8550
-	m.setWifi = func(string, dspb.WifiRequest_State) error { return nil } // acquire verifies OFF too (sair#86)
+	m.setWifi = func(string, dspb.WifiRequest_State, string) error { return nil } // acquire verifies OFF too (sair#86)
 	var forwards []string
 	m.addReverse = func(serial string, port int) error {
 		forwards = append(forwards, fmt.Sprintf("%s:%d", serial, port))
 		return nil
 	}
-	sp, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", "")
+	sp, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, "", false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestAcquireSetsUpDeviceAPI(t *testing.T) {
 
 	m.addReverse = func(string, int) error { return errors.New("cannot bind") }
 	fake.resp.LockId = "L2"
-	sp, err = m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", "")
+	sp, err = m.Acquire(context.Background(), nil, 0, "", "", 0, false, "", false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestResetSkipsPhoneRelockedWhileWaiting(t *testing.T) {
 	var mu sync.Mutex
 	var calls []string
 	release := make(chan struct{})
-	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+	m.setWifi = func(serial string, state dspb.WifiRequest_State, _ string) error {
 		mu.Lock()
 		calls = append(calls, serial+" "+state.String())
 		mu.Unlock()
@@ -196,7 +196,7 @@ func TestResetSkipsPhoneRelockedWhileWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	on := make(chan error, 1)
-	go func() { on <- m.SetWifi("L2", nil, true) }()
+	go func() { on <- m.SetWifi("L2", nil, true, "") }()
 	time.Sleep(50 * time.Millisecond)
 	closed := make(chan struct{})
 	go func() { m.OnLockExpired("L1"); close(closed) }()
@@ -217,7 +217,7 @@ func TestResetSkipsPhoneRelockedWhileWaiting(t *testing.T) {
 func TestCloseResetsPackagesBeforeWifiAndLogsIt(t *testing.T) {
 	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
 	var calls []string
-	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+	m.setWifi = func(serial string, state dspb.WifiRequest_State, _ string) error {
 		calls = append(calls, serial+" "+state.String())
 		return nil
 	}
@@ -264,8 +264,11 @@ func TestAcquireCleansUpWhatAnEarlierJobLeft(t *testing.T) {
 		calls = append(calls, "packages")
 		return []string{"com.example.app"}, nil, nil
 	}
-	m.setWifi = func(_ string, state dspb.WifiRequest_State) error { calls = append(calls, state.String()); return nil }
-	sp, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", "")
+	m.setWifi = func(_ string, state dspb.WifiRequest_State, _ string) error {
+		calls = append(calls, state.String())
+		return nil
+	}
+	sp, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, "", false, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

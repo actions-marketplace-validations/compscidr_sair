@@ -591,9 +591,13 @@ func (x *ResetPackagesResponse) GetSuggestionsRemoved() []string {
 }
 
 type WifiRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Serial        string                 `protobuf:"bytes,1,opt,name=serial,proto3" json:"serial,omitempty"`
-	State         WifiRequest_State      `protobuf:"varint,2,opt,name=state,proto3,enum=devicesource.WifiRequest_State" json:"state,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Serial string                 `protobuf:"bytes,1,opt,name=serial,proto3" json:"serial,omitempty"`
+	State  WifiRequest_State      `protobuf:"varint,2,opt,name=state,proto3,enum=devicesource.WifiRequest_State" json:"state,omitempty"`
+	// ON only: "2.4", "5" or "6" pins the suggestion to the strongest BSSID of
+	// the bench SSID the phone sees in that GHz band; empty lets Android pick.
+	// Device sources that predate it ignore it and join any band.
+	Band          string `protobuf:"bytes,3,opt,name=band,proto3" json:"band,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -640,6 +644,13 @@ func (x *WifiRequest) GetState() WifiRequest_State {
 		return x.State
 	}
 	return WifiRequest_RESET
+}
+
+func (x *WifiRequest) GetBand() string {
+	if x != nil {
+		return x.Band
+	}
+	return ""
 }
 
 type Devices struct {
@@ -1263,10 +1274,11 @@ const file_proto_devicesource_devicesource_proto_rawDesc = "" +
 	"\x06serial\x18\x01 \x01(\tR\x06serial\"b\n" +
 	"\x15ResetPackagesResponse\x12\x18\n" +
 	"\aremoved\x18\x01 \x03(\tR\aremoved\x12/\n" +
-	"\x13suggestions_removed\x18\x02 \x03(\tR\x12suggestionsRemoved\"\x81\x01\n" +
+	"\x13suggestions_removed\x18\x02 \x03(\tR\x12suggestionsRemoved\"\x95\x01\n" +
 	"\vWifiRequest\x12\x16\n" +
 	"\x06serial\x18\x01 \x01(\tR\x06serial\x125\n" +
-	"\x05state\x18\x02 \x01(\x0e2\x1f.devicesource.WifiRequest.StateR\x05state\"#\n" +
+	"\x05state\x18\x02 \x01(\x0e2\x1f.devicesource.WifiRequest.StateR\x05state\x12\x12\n" +
+	"\x04band\x18\x03 \x01(\tR\x04band\"#\n" +
 	"\x05State\x12\t\n" +
 	"\x05RESET\x10\x00\x12\a\n" +
 	"\x03OFF\x10\x01\x12\x06\n" +

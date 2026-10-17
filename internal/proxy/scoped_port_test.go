@@ -334,12 +334,12 @@ func TestAcquireVerifiesWifiStateEitherWay(t *testing.T) {
 		fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
 		m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
 		var states []dspb.WifiRequest_State
-		m.setWifi = func(_ string, state dspb.WifiRequest_State) error {
+		m.setWifi = func(_ string, state dspb.WifiRequest_State, _ string) error {
 			states = append(states, state)
 			return nil
 		}
 		m.removeReverse = func(string) error { return nil }
-		if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, wifi, false, "", ""); err != nil {
+		if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, wifi, "", false, "", ""); err != nil {
 			t.Fatal(err)
 		}
 		want := dspb.WifiRequest_OFF
@@ -351,10 +351,10 @@ func TestAcquireVerifiesWifiStateEitherWay(t *testing.T) {
 		}
 		m.CloseScopedPort("L1")
 
-		m.setWifi = func(string, dspb.WifiRequest_State) error {
+		m.setWifi = func(string, dspb.WifiRequest_State, string) error {
 			return status.Error(codes.DeadlineExceeded, "still on Wi-Fi")
 		}
-		if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, wifi, false, "", ""); status.Code(err) != codes.DeadlineExceeded {
+		if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, wifi, "", false, "", ""); status.Code(err) != codes.DeadlineExceeded {
 			t.Errorf("wifi=%v: err = %v, want DeadlineExceeded", wifi, err)
 		}
 		if fake.lastRelease == nil || fake.lastRelease.LockId != "L1" {
@@ -368,14 +368,14 @@ func TestAcquireVerifiesWifiStateEitherWay(t *testing.T) {
 func TestAcquireFailsWhenPhoneStaysLocked(t *testing.T) {
 	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
 	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
-	m.setWifi = func(string, dspb.WifiRequest_State) error { return nil }
+	m.setWifi = func(string, dspb.WifiRequest_State, string) error { return nil }
 	m.removeReverse = func(string) error { return nil }
 	woke := 0
 	m.wake = func(string) error {
 		woke++
 		return status.Error(codes.FailedPrecondition, "A: screen locked")
 	}
-	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, true, false, "", ""); status.Code(err) != codes.FailedPrecondition {
+	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, true, "", false, "", ""); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("err = %v, want FailedPrecondition", err)
 	}
 	if fake.lastRelease == nil || fake.lastRelease.LockId != "L1" {
@@ -404,13 +404,13 @@ func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 		steps = append(steps, "reboot")
 		return true, 30 * time.Hour, nil
 	}
-	m.setWifi = func(_ string, st dspb.WifiRequest_State) error {
+	m.setWifi = func(_ string, st dspb.WifiRequest_State, _ string) error {
 		steps = append(steps, "wifi "+st.String())
 		return nil
 	}
 	m.wake = func(string) error { steps = append(steps, "wake"); return nil }
 	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return nil }
-	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", ""); err != nil {
+	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, "", false, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	steps = nil
@@ -445,12 +445,12 @@ func TestBluetoothCycledOnReleaseAndOnAcquireOnlyWhenNeeded(t *testing.T) {
 	m.removeReverse = func(string) error { return nil }
 	m.resetPackages = func(string) ([]string, []string, error) { return nil, nil, nil }
 	m.rebootIfStale = func(string) (bool, time.Duration, error) { return false, time.Hour, nil }
-	m.setWifi = func(_ string, st dspb.WifiRequest_State) error { steps = append(steps, "wifi "+st.String()); return nil }
+	m.setWifi = func(_ string, st dspb.WifiRequest_State, _ string) error { steps = append(steps, "wifi "+st.String()); return nil }
 	m.wake = func(string) error { steps = append(steps, "wake"); return nil }
 	btErr := status.Error(codes.DeadlineExceeded, "A Bluetooth not back on within 30s: adapter is OFF")
 	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return btErr }
 
-	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", ""); err != nil {
+	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, "", false, "", ""); err != nil {
 		t.Fatalf("a Bluetooth failure cost the lock: %v", err)
 	}
 	if want := []string{"bluetooth", "wake", "wifi OFF"}; !reflect.DeepEqual(steps, want) {
@@ -472,7 +472,7 @@ func TestBluetoothCycledOnReleaseAndOnAcquireOnlyWhenNeeded(t *testing.T) {
 		t.Errorf("lock log Bluetooth lines = %q", lines)
 	}
 	steps = nil
-	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", ""); err != nil {
+	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, "", false, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"wake", "wifi OFF"}; !reflect.DeepEqual(steps, want) {
@@ -519,7 +519,7 @@ func TestReleaseRebootsAWedgedRadioAndResetsAgain(t *testing.T) {
 		m.wake = func(string) error { return nil }
 		wedged := true
 		hang := status.Error(codes.DeadlineExceeded, "radio not back")
-		m.setWifi = func(_ string, st dspb.WifiRequest_State) error {
+		m.setWifi = func(_ string, st dspb.WifiRequest_State, _ string) error {
 			steps = append(steps, "wifi "+st.String())
 			if radio == "wifi" && st == dspb.WifiRequest_RESET && wedged {
 				return hang
@@ -538,7 +538,7 @@ func TestReleaseRebootsAWedgedRadioAndResetsAgain(t *testing.T) {
 			wedged = false
 			return true, nil
 		}
-		if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, false, "", ""); err != nil {
+		if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, false, "", false, "", ""); err != nil {
 			t.Fatal(err)
 		}
 		steps, wedged = nil, true
