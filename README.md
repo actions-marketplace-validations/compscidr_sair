@@ -817,10 +817,11 @@ Key points about the workflow:
   so the job pages show what actually ran on the device even for jobs that
   timed out. The bare port records nothing.
 - On GitHub Actions `sair-acquire` also sends the repository, a link to the
-  run, the job id, run attempt, commit and workflow (from `GITHUB_REPOSITORY`,
-  `GITHUB_RUN_ID`, `GITHUB_JOB`, `GITHUB_RUN_ATTEMPT`, `GITHUB_SHA`,
-  `GITHUB_WORKFLOW`), which the dashboards show per job. Elsewhere pass
-  `--repo`, `--run-url`, `--job`, `--run-attempt`, `--sha` and `--workflow`.
+  run, the job id, run attempt, commit, branch and workflow (from
+  `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, `GITHUB_JOB`, `GITHUB_RUN_ATTEMPT`,
+  `GITHUB_SHA`, `GITHUB_HEAD_REF` or `GITHUB_REF_NAME`, `GITHUB_WORKFLOW`),
+  which the dashboards show per job. Elsewhere pass `--repo`, `--run-url`,
+  `--job`, `--run-attempt`, `--sha`, `--branch` and `--workflow`.
   `GITHUB_JOB` is the same for every leg of a matrix job, so set `SAIR_STAGE`
   (e.g. `SAIR_STAGE: api-${{ matrix.api }}`) or pass `--stage` to tell the legs
   apart. A proxy older than these fields ignores them.

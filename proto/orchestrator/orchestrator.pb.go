@@ -592,7 +592,10 @@ type AcquireLockRequest struct {
 	Stage      string `protobuf:"bytes,14,opt,name=stage,proto3" json:"stage,omitempty"`
 	// Free-form labels the client sets; sair stores and shows them, nothing
 	// more. The proxy caps them in count and size.
-	Labels        []*Label `protobuf:"bytes,15,rep,name=labels,proto3" json:"labels,omitempty"`
+	Labels []*Label `protobuf:"bytes,15,rep,name=labels,proto3" json:"labels,omitempty"`
+	// Branch under test (the PR head branch, else the pushed ref name), shown
+	// next to the repo. Empty from clients and proxies that predate it.
+	Branch        string `protobuf:"bytes,16,opt,name=branch,proto3" json:"branch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -723,6 +726,13 @@ func (x *AcquireLockRequest) GetLabels() []*Label {
 		return x.Labels
 	}
 	return nil
+}
+
+func (x *AcquireLockRequest) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
 }
 
 // A k=v label on a lock, or on one of its devices when serial is set.
@@ -2377,7 +2387,7 @@ const file_proto_orchestrator_orchestrator_proto_rawDesc = "" +
 	" \x01(\tR\x04hint\x1aC\n" +
 	"\x15FailuresByReasonEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"\x91\x03\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"\xa9\x03\n" +
 	"\x12AcquireLockRequest\x12\x18\n" +
 	"\aserials\x18\x01 \x03(\tR\aserials\x12\x12\n" +
 	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x14\n" +
@@ -2395,7 +2405,8 @@ const file_proto_orchestrator_orchestrator_proto_rawDesc = "" +
 	"\x03sha\x18\f \x01(\tR\x03sha\x12\x1a\n" +
 	"\bworkflow\x18\r \x01(\tR\bworkflow\x12\x14\n" +
 	"\x05stage\x18\x0e \x01(\tR\x05stage\x12+\n" +
-	"\x06labels\x18\x0f \x03(\v2\x13.orchestrator.LabelR\x06labels\"G\n" +
+	"\x06labels\x18\x0f \x03(\v2\x13.orchestrator.LabelR\x06labels\x12\x16\n" +
+	"\x06branch\x18\x10 \x01(\tR\x06branch\"G\n" +
 	"\x05Label\x12\x16\n" +
 	"\x06serial\x18\x01 \x01(\tR\x06serial\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\x12\x14\n" +
