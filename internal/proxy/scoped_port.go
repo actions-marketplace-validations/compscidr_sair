@@ -782,7 +782,9 @@ func (m *ScopedPortManager) GetAllScopedPorts() []*ScopedPort {
 	return ports
 }
 
-// ShutdownAll closes all scoped ports and releases all locks.
+// ShutdownAll closes all scoped ports and releases all locks, as
+// "proxy_restart" so the account's lock list (sair-locks) can tell a proxy
+// going away from a job that cancelled.
 func (m *ScopedPortManager) ShutdownAll() {
 	m.mu.Lock()
 	ports := make([]*ScopedPort, 0, len(m.scopedPorts))
@@ -794,7 +796,7 @@ func (m *ScopedPortManager) ShutdownAll() {
 	for _, sp := range ports {
 		m.CloseScopedPort(sp.LockID) // stops the heartbeat before we drain
 		entries := sp.Log.DrainAll()
-		if _, err := m.commandRouter.ReleaseLock(sp.LockID, "cancelled", entries); err != nil {
+		if _, err := m.commandRouter.ReleaseLock(sp.LockID, "proxy_restart", entries); err != nil {
 			slog.Warn("failed to release lock during shutdown", "lockId", sp.LockID, "error", err)
 		}
 	}
