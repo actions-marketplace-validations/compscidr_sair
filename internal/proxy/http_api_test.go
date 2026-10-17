@@ -463,11 +463,11 @@ func TestParseLabels(t *testing.T) {
 func TestHTTPApiAcquireForwardsJob(t *testing.T) {
 	fake := &fakeOrchClient{err: status.Error(codes.ResourceExhausted, "busy")}
 	api := &HTTPApi{apiKey: "test-key", scopedPortManager: NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "test-key"}, nil, 0)}
-	req := httptest.NewRequest("POST", "/acquire?repo=o/r&job=test&run_attempt=2&sha=abc&workflow=CI&stage=api-34&label=os=14&label=S1:role=go", nil)
+	req := httptest.NewRequest("POST", "/acquire?repo=o/r&job=test&run_attempt=2&sha=abc&branch=main&workflow=CI&stage=api-34&label=os=14&label=S1:role=go", nil)
 	req.Header.Set("x-api-key", "test-key")
 	api.handleAcquire(httptest.NewRecorder(), req)
 
-	want := &pb.AcquireLockRequest{Repo: "o/r", Job: "test", RunAttempt: 2, Sha: "abc", Workflow: "CI", Stage: "api-34",
+	want := &pb.AcquireLockRequest{Repo: "o/r", Job: "test", RunAttempt: 2, Sha: "abc", Branch: "main", Workflow: "CI", Stage: "api-34",
 		Labels: []*pb.Label{{Key: "os", Value: "14"}, {Serial: "S1", Key: "role", Value: "go"}}}
 	got := fake.lastAcquire
 	got.ProxyId, got.Priority = "", 0

@@ -253,7 +253,7 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 	}
 	job := &pb.AcquireLockRequest{
 		Repo: q.Get("repo"), RunUrl: q.Get("run_url"), Job: q.Get("job"), RunAttempt: int32(runAttempt),
-		Sha: q.Get("sha"), Workflow: q.Get("workflow"), Stage: q.Get("stage"), Labels: labels,
+		Sha: q.Get("sha"), Branch: q.Get("branch"), Workflow: q.Get("workflow"), Stage: q.Get("stage"), Labels: labels,
 	}
 	sp, err := a.scopedPortManager.Acquire(r.Context(), requestedSerials, int32(count), job, int32(priority), wifi, wifiBand, sameProxy, a.tenantKey(r), clientIP(r))
 	if err != nil {

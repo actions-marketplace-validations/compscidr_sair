@@ -546,7 +546,7 @@ func (r *CommandRouter) AcquireLock(parent context.Context, serials map[string]s
 
 	req := &pb.AcquireLockRequest{
 		Repo: job.GetRepo(), RunUrl: job.GetRunUrl(), Job: job.GetJob(), RunAttempt: job.GetRunAttempt(),
-		Sha: job.GetSha(), Workflow: job.GetWorkflow(), Stage: job.GetStage(), Labels: job.GetLabels(),
+		Sha: job.GetSha(), Branch: job.GetBranch(), Workflow: job.GetWorkflow(), Stage: job.GetStage(), Labels: job.GetLabels(),
 		Count: count, ProxyId: r.proxyID, Priority: priority, SameProxy: sameProxy, TenantApiKey: tenantKey,
 	}
 	for s := range serials {

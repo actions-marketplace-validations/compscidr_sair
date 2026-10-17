@@ -24,7 +24,7 @@
 #   SAIR_API_KEY     API key for authentication (default: dev-key-123)
 #   SAIR_STAGE       Matrix leg / stage within the job (default: none)
 #   On GitHub Actions the repo (GITHUB_REPOSITORY), a link to the run, the job
-#   id (GITHUB_JOB), run attempt, commit and workflow are sent along
+#   id (GITHUB_JOB), run attempt, commit, branch and workflow are sent along
 #   automatically so the orchestrator can show them per job.
 #
 # After eval, these are exported:
@@ -64,6 +64,8 @@ WIFI_BAND=""
 JOB="${GITHUB_JOB:-}"
 RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}"
 SHA="${GITHUB_SHA:-}"
+# The PR head branch on pull_request runs, else the pushed branch or tag.
+BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
 WORKFLOW="${GITHUB_WORKFLOW:-}"
 STAGE="${SAIR_STAGE:-}"
 LABELS=()
@@ -119,6 +121,10 @@ while [[ $# -gt 0 ]]; do
             WORKFLOW="$2"
             shift 2
             ;;
+        --branch)
+            BRANCH="$2"
+            shift 2
+            ;;
         --stage)
             STAGE="$2"
             shift 2
@@ -150,7 +156,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         --help|-h)
-            echo "Usage: eval \$(sair-acquire [--serial SERIAL[,SERIAL...]] [--count N] [--url URL] [--api-key KEY] [--repo OWNER/NAME] [--run-url URL] [--priority N] [--no-wifi] [--wifi-band 2.4|5|6] [--same-proxy] [--job ID] [--run-attempt N] [--sha SHA] [--workflow NAME] [--stage NAME] [--label [SERIAL:]K=V]... [--version])" >&2
+            echo "Usage: eval \$(sair-acquire [--serial SERIAL[,SERIAL...]] [--count N] [--url URL] [--api-key KEY] [--repo OWNER/NAME] [--run-url URL] [--priority N] [--no-wifi] [--wifi-band 2.4|5|6] [--same-proxy] [--job ID] [--run-attempt N] [--sha SHA] [--branch NAME] [--workflow NAME] [--stage NAME] [--label [SERIAL:]K=V]... [--version])" >&2
             echo "" >&2
             echo "Acquires a device lock via the SAIR ADB proxy." >&2
             echo "Blocks until devices are available." >&2
@@ -169,6 +175,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --job ID          Job id shown on the job (default: \$GITHUB_JOB)" >&2
             echo "  --run-attempt N   Attempt of the CI run (default: \$GITHUB_RUN_ATTEMPT)" >&2
             echo "  --sha SHA         Commit under test (default: \$GITHUB_SHA)" >&2
+            echo "  --branch NAME     Branch under test (default: \$GITHUB_HEAD_REF, else \$GITHUB_REF_NAME)" >&2
             echo "  --workflow NAME   Workflow name (default: \$GITHUB_WORKFLOW)" >&2
             echo "  --stage NAME      Matrix leg or stage within the job, e.g. api-34 (default: \$SAIR_STAGE)" >&2
             echo "  --label K=V       Label the lease (repeatable); SERIAL:K=V labels one device." >&2
@@ -233,6 +240,7 @@ fi
 [[ -n "$JOB" ]] && CURL_ARGS+=(--data-urlencode "job=${JOB}")
 [[ -n "$RUN_ATTEMPT" ]] && CURL_ARGS+=(--data-urlencode "run_attempt=${RUN_ATTEMPT}")
 [[ -n "$SHA" ]] && CURL_ARGS+=(--data-urlencode "sha=${SHA}")
+[[ -n "$BRANCH" ]] && CURL_ARGS+=(--data-urlencode "branch=${BRANCH}")
 [[ -n "$WORKFLOW" ]] && CURL_ARGS+=(--data-urlencode "workflow=${WORKFLOW}")
 [[ -n "$STAGE" ]] && CURL_ARGS+=(--data-urlencode "stage=${STAGE}")
 # ${a[@]+...}: an empty array is "unbound" under set -u on bash < 4.4 (macOS)

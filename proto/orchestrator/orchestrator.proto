@@ -132,6 +132,9 @@ message AcquireLockRequest {
   // Free-form labels the client sets; sair stores and shows them, nothing
   // more. The proxy caps them in count and size.
   repeated Label labels = 15;
+  // Branch under test (the PR head branch, else the pushed ref name), shown
+  // next to the repo. Empty from clients and proxies that predate it.
+  string branch = 16;
 }
 
 // A k=v label on a lock, or on one of its devices when serial is set.
