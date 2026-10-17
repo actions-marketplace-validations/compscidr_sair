@@ -231,8 +231,9 @@ func (r *CommandRouter) ForwardToDevice(sourceAddr, serial, command string, conn
 }
 
 // SetWifi sets a device's Wi-Fi through the device source it is attached to.
-// NotFound for a device this proxy has no source for (e.g. a relayed one).
-func (r *CommandRouter) SetWifi(serial string, state dspb.WifiRequest_State) error {
+// band is WifiRequest.band. NotFound for a device this proxy has no source
+// for (e.g. a relayed one).
+func (r *CommandRouter) SetWifi(serial string, state dspb.WifiRequest_State, band string) error {
 	addr := ""
 	if r.ResolveSource != nil {
 		addr = r.ResolveSource(serial)
@@ -248,7 +249,7 @@ func (r *CommandRouter) SetWifi(serial string, state dspb.WifiRequest_State) err
 	// guards against a source that never answers.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	_, err = client.SetWifi(ctx, &dspb.WifiRequest{Serial: serial, State: state})
+	_, err = client.SetWifi(ctx, &dspb.WifiRequest{Serial: serial, State: state, Band: band})
 	return err
 }
 

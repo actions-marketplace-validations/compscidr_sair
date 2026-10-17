@@ -363,7 +363,7 @@ func TestHTTPApiDeviceReportCarriesWifiStats(t *testing.T) {
 func TestHTTPApiWifiDeviceToken(t *testing.T) {
 	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
 	var calls []string
-	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+	m.setWifi = func(serial string, state dspb.WifiRequest_State, _ string) error {
 		calls = append(calls, serial+" "+state.String())
 		return nil
 	}
@@ -411,5 +411,33 @@ func TestHTTPApiWifiDeviceToken(t *testing.T) {
 	}
 	if want := []string{"A ON", "A RESET"}; !slices.Equal(calls, want) {
 		t.Errorf("calls = %q, want %q", calls, want)
+	}
+}
+
+// /wifi passes band through to the device source and refuses one it would
+// not take, or one with state off (sair#143).
+func TestHTTPApiWifiBand(t *testing.T) {
+	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
+	var bands []string
+	m.setWifi = func(_ string, _ dspb.WifiRequest_State, band string) error { bands = append(bands, band); return nil }
+	if _, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	api := &HTTPApi{apiKey: "test-key", scopedPortManager: m}
+	for path, want := range map[string]int{
+		"/wifi?lock_id=L1&state=on&band=2.4": http.StatusOK,
+		"/wifi?lock_id=L1&state=on&band=60":  http.StatusBadRequest,
+		"/wifi?lock_id=L1&state=off&band=5":  http.StatusBadRequest,
+	} {
+		req := httptest.NewRequest("POST", path, nil)
+		req.Header.Set("x-api-key", "test-key")
+		w := httptest.NewRecorder()
+		api.handleWifi(w, req)
+		if w.Code != want {
+			t.Errorf("%s: %d, want %d", path, w.Code, want)
+		}
+	}
+	if !slices.Equal(bands, []string{"2.4"}) {
+		t.Errorf("bands sent = %q, want [2.4]", bands)
 	}
 }

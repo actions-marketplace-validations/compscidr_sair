@@ -32,7 +32,7 @@ CI job 3 ···  Orchestrator: job 3 waits in the queue until
 ## GitHub Action
 
 This repo is also a GitHub Action that puts `sair-acquire`, `sair-release`,
-`sair-wifi` and `sair-label` on `PATH`. The tools need an orchestrator account: sign up at
+`sair-wifi`, `sair-locks` and `sair-label` on `PATH`. The tools need an orchestrator account: sign up at
 [sair.run](https://sair.run) to get an API key, store it as the repository
 secret `SAIR_API_KEY`, and set the repository variable `SAIR_PROXY_URL` to
 your bench's proxy (see [Run](#run)). Then:
@@ -176,7 +176,11 @@ you:
 - **On acquire** each phone joins the bench Wi-Fi and the acquire returns only
   once the phone is *online* (below); it fails otherwise. `--no-wifi` hands it
   over *offline* instead, verified the same way rather than trusting the
-  previous release.
+  previous release. `--wifi-band 2.4|5|6` (also `sair-wifi on --band`) joins
+  on that GHz band: the phone scans, the suggestion is pinned to the
+  strongest BSSID of `WIFI_SSID` it sees in the band, and the join fails if
+  it sees none. The phone's `cmd wifi status` shows the BSSID and frequency
+  it joined.
 - **On release**, and when a lock expires or is cancelled, each phone is reset:
   every suggestion added through `adb shell` and every saved network is
   forgotten and the radio is toggled, and the reset waits until the phone is
@@ -487,7 +491,7 @@ the field and records the lock under the owner.
 
 On GitHub Actions, `uses: compscidr/sair@v0.0.21` (or any later release tag)
 puts the tools on `PATH`; see the workflow example below. Elsewhere, copy
-`tools/sair-acquire`, `tools/sair-release`, `tools/sair-wifi` and `tools/sair-label` into your CI project or add this
+`tools/sair-acquire`, `tools/sair-release`, `tools/sair-wifi`, `tools/sair-locks` and `tools/sair-label` into your CI project or add this
 repo's `tools/` directory to `PATH`.
 
 **Acquire** a device lock (blocks until devices are available):
@@ -539,6 +543,9 @@ eval $(sair-acquire --priority -1)
 # Phones verified offline (default: joined to the bench Wi-Fi and online)
 eval $(sair-acquire --no-wifi)
 
+# Join the bench Wi-Fi on one band of a dual/tri-band AP (2.4, 5 or 6 GHz)
+eval $(sair-acquire --wifi-band 2.4)
+
 # Tell matrix legs of one job apart (default: $SAIR_STAGE), and label the
 # lease or one of its devices for the job views
 eval $(sair-acquire --stage api-34 --label suite=smoke --label DEVICE_A:role=group-owner)
@@ -550,6 +557,7 @@ sair-label DEVICE_A:role=group-owner DEVICE_B:role=client
 # Drop and restore the network mid-job (all locked devices, or --serial)
 sair-wifi off
 sair-wifi on
+sair-wifi on --band 5
 
 # Which release the tools (or a bench's binaries) came from
 sair-acquire --version
@@ -560,6 +568,13 @@ eval $(sair-acquire --url http://proxy-host:8550 --api-key my-key)
 
 # Release with explicit lock ID
 sair-release --lock-id <lock-id>
+
+# Every lock your account holds (all proxies, all keys) and the ones that
+# ended in the last hour, with how; asks the orchestrator, not the proxy
+# (SAIR_ORCHESTRATOR_URL, default https://orchestrator.sair.run)
+sair-locks
+# Release every lock this key holds, e.g. after a crashed agent or killed job
+sair-locks --release-mine
 ```
 
 ### Device-side Wi-Fi control

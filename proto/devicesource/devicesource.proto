@@ -126,6 +126,10 @@ message WifiRequest {
   }
   string serial = 1;
   State state = 2;
+  // ON only: "2.4", "5" or "6" pins the suggestion to the strongest BSSID of
+  // the bench SSID the phone sees in that GHz band; empty lets Android pick.
+  // Device sources that predate it ignore it and join any band.
+  string band = 3;
 }
 
 message Devices {

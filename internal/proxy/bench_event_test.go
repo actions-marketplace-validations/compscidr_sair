@@ -26,7 +26,7 @@ func TestAcquireWifiFailureSendsEventsAndExcerpt(t *testing.T) {
 	var events []*pb.BenchEvent
 	m.event = func(e *pb.BenchEvent) { mu.Lock(); events = append(events, e); mu.Unlock() }
 	m.recentSourceLog = func(serial string) ([]string, error) { return []string{"ds SetWifi serial=" + serial}, nil }
-	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+	m.setWifi = func(serial string, state dspb.WifiRequest_State, _ string) error {
 		if state == dspb.WifiRequest_ON {
 			slog.Info("joining", "serial", serial)
 			slog.Info("unrelated", "serial", "OTHER")
@@ -35,7 +35,7 @@ func TestAcquireWifiFailureSendsEventsAndExcerpt(t *testing.T) {
 		return nil
 	}
 
-	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, true, false, "", ""); err == nil {
+	if _, err := m.Acquire(context.Background(), nil, 0, "", "", 0, true, "", false, "", ""); err == nil {
 		t.Fatal("acquire succeeded with a phone off the Wi-Fi")
 	}
 
