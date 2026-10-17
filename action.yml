@@ -1,7 +1,6 @@
 name: Setup SAIR tools
 description: >-
-  Share physical Android devices across CI jobs with sair-acquire/sair-release
-  (plus sair-wifi, sair-locks and sair-label).
+  Share physical Android devices across CI jobs with sair-acquire/sair-release.
   Needs an API key from https://sair.run.
 branding:
   icon: smartphone
