@@ -17,12 +17,15 @@
 #   eval $(sair-acquire --serial DEVICE_A,DEVICE_B)  # lock multiple devices
 #   eval $(sair-acquire --priority -1)            # queue behind everyone at 0 (e.g. bot PRs)
 #   eval $(sair-acquire --no-wifi)                # phones verified offline (default: online on bench Wi-Fi)
+#   eval $(sair-acquire --stage api-34 --label suite=smoke)  # matrix leg + a label for the job views
 #
 # Environment variables:
 #   SAIR_PROXY_URL   Proxy HTTP API URL (default: http://localhost:8550)
 #   SAIR_API_KEY     API key for authentication (default: dev-key-123)
-#   On GitHub Actions the repo (GITHUB_REPOSITORY) and a link to the run are
-#   sent along automatically so the orchestrator can show them per job.
+#   SAIR_STAGE       Matrix leg / stage within the job (default: none)
+#   On GitHub Actions the repo (GITHUB_REPOSITORY), a link to the run, the job
+#   id (GITHUB_JOB), run attempt, commit and workflow are sent along
+#   automatically so the orchestrator can show them per job.
 #
 # After eval, these are exported:
 #   SAIR_LOCK_ID              Lock ID for releasing later
@@ -58,6 +61,12 @@ PRIORITY=""
 WIFI="on"
 SAME_PROXY=""
 WIFI_BAND=""
+JOB="${GITHUB_JOB:-}"
+RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-}"
+SHA="${GITHUB_SHA:-}"
+WORKFLOW="${GITHUB_WORKFLOW:-}"
+STAGE="${SAIR_STAGE:-}"
+LABELS=()
 if [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" && -n "${GITHUB_RUN_ID:-}" ]]; then
     RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
     [[ -n "${GITHUB_RUN_ATTEMPT:-}" ]] && RUN_URL="${RUN_URL}/attempts/${GITHUB_RUN_ATTEMPT}"
@@ -94,6 +103,34 @@ while [[ $# -gt 0 ]]; do
             PRIORITY="$2"
             shift 2
             ;;
+        --job)
+            JOB="$2"
+            shift 2
+            ;;
+        --run-attempt)
+            RUN_ATTEMPT="$2"
+            shift 2
+            ;;
+        --sha)
+            SHA="$2"
+            shift 2
+            ;;
+        --workflow)
+            WORKFLOW="$2"
+            shift 2
+            ;;
+        --stage)
+            STAGE="$2"
+            shift 2
+            ;;
+        --label)
+            if [[ "$2" != *?=* ]]; then
+                echo "sair-acquire: ERROR: --label takes k=v or SERIAL:k=v (got '$2')" >&2
+                exit 1
+            fi
+            LABELS+=("$2")
+            shift 2
+            ;;
         --no-wifi)
             WIFI="off"
             shift
@@ -113,7 +150,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         --help|-h)
-            echo "Usage: eval \$(sair-acquire [--serial SERIAL[,SERIAL...]] [--count N] [--url URL] [--api-key KEY] [--repo OWNER/NAME] [--run-url URL] [--priority N] [--no-wifi] [--wifi-band 2.4|5|6] [--same-proxy] [--version])" >&2
+            echo "Usage: eval \$(sair-acquire [--serial SERIAL[,SERIAL...]] [--count N] [--url URL] [--api-key KEY] [--repo OWNER/NAME] [--run-url URL] [--priority N] [--no-wifi] [--wifi-band 2.4|5|6] [--same-proxy] [--job ID] [--run-attempt N] [--sha SHA] [--workflow NAME] [--stage NAME] [--label [SERIAL:]K=V]... [--version])" >&2
             echo "" >&2
             echo "Acquires a device lock via the SAIR ADB proxy." >&2
             echo "Blocks until devices are available." >&2
@@ -129,6 +166,13 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-wifi         Hand over phones verified offline instead of online on the bench Wi-Fi" >&2
             echo "  --wifi-band BAND  Join the bench Wi-Fi on the 2.4, 5 or 6 GHz band (default: any)" >&2
             echo "  --same-proxy      Take every device from one proxy, so the phones sit together" >&2
+            echo "  --job ID          Job id shown on the job (default: \$GITHUB_JOB)" >&2
+            echo "  --run-attempt N   Attempt of the CI run (default: \$GITHUB_RUN_ATTEMPT)" >&2
+            echo "  --sha SHA         Commit under test (default: \$GITHUB_SHA)" >&2
+            echo "  --workflow NAME   Workflow name (default: \$GITHUB_WORKFLOW)" >&2
+            echo "  --stage NAME      Matrix leg or stage within the job, e.g. api-34 (default: \$SAIR_STAGE)" >&2
+            echo "  --label K=V       Label the lease (repeatable); SERIAL:K=V labels one device." >&2
+            echo "                    Labels known only later: sair-label" >&2
             echo "" >&2
             echo "The lock is held until sair-release (or until the orchestrator times it out)." >&2
             echo "The eval exports SAIR_LOCK_ID only into the current shell. If the release" >&2
@@ -186,6 +230,13 @@ fi
 [[ -n "$PRIORITY" ]] && CURL_ARGS+=(--data-urlencode "priority=${PRIORITY}")
 [[ -n "$WIFI_BAND" ]] && CURL_ARGS+=(--data-urlencode "wifi_band=${WIFI_BAND}")
 [[ -n "$SAME_PROXY" ]] && CURL_ARGS+=(--data-urlencode "same_proxy=true")
+[[ -n "$JOB" ]] && CURL_ARGS+=(--data-urlencode "job=${JOB}")
+[[ -n "$RUN_ATTEMPT" ]] && CURL_ARGS+=(--data-urlencode "run_attempt=${RUN_ATTEMPT}")
+[[ -n "$SHA" ]] && CURL_ARGS+=(--data-urlencode "sha=${SHA}")
+[[ -n "$WORKFLOW" ]] && CURL_ARGS+=(--data-urlencode "workflow=${WORKFLOW}")
+[[ -n "$STAGE" ]] && CURL_ARGS+=(--data-urlencode "stage=${STAGE}")
+# ${a[@]+...}: an empty array is "unbound" under set -u on bash < 4.4 (macOS)
+for l in ${LABELS[@]+"${LABELS[@]}"}; do CURL_ARGS+=(--data-urlencode "label=${l}"); done
 RESPONSE=$(curl "${CURL_ARGS[@]}" "${ACQUIRE_URL}") || {
     echo "sair-acquire: ERROR: failed to contact proxy" >&2
     exit 1

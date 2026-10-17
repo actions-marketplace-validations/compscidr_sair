@@ -32,7 +32,7 @@ CI job 3 ···  Orchestrator: job 3 waits in the queue until
 ## GitHub Action
 
 This repo is also a GitHub Action that puts `sair-acquire`, `sair-release`,
-`sair-wifi` and `sair-locks` on `PATH`. The tools need an orchestrator account: sign up at
+`sair-wifi`, `sair-locks` and `sair-label` on `PATH`. The tools need an orchestrator account: sign up at
 [sair.run](https://sair.run) to get an API key, store it as the repository
 secret `SAIR_API_KEY`, and set the repository variable `SAIR_PROXY_URL` to
 your bench's proxy (see [Run](#run)). Then:
@@ -491,7 +491,7 @@ the field and records the lock under the owner.
 
 On GitHub Actions, `uses: compscidr/sair@v0.0.21` (or any later release tag)
 puts the tools on `PATH`; see the workflow example below. Elsewhere, copy
-`tools/sair-acquire`, `tools/sair-release`, `tools/sair-wifi` and `tools/sair-locks` into your CI project or add this
+`tools/sair-acquire`, `tools/sair-release`, `tools/sair-wifi`, `tools/sair-locks` and `tools/sair-label` into your CI project or add this
 repo's `tools/` directory to `PATH`.
 
 **Acquire** a device lock (blocks until devices are available):
@@ -545,6 +545,14 @@ eval $(sair-acquire --no-wifi)
 
 # Join the bench Wi-Fi on one band of a dual/tri-band AP (2.4, 5 or 6 GHz)
 eval $(sair-acquire --wifi-band 2.4)
+
+# Tell matrix legs of one job apart (default: $SAIR_STAGE), and label the
+# lease or one of its devices for the job views
+eval $(sair-acquire --stage api-34 --label suite=smoke --label DEVICE_A:role=group-owner)
+
+# Labels only known once the serials are granted; a key labeled again takes
+# the new value (needs a proxy with /label)
+sair-label DEVICE_A:role=group-owner DEVICE_B:role=client
 
 # Drop and restore the network mid-job (all locked devices, or --serial)
 sair-wifi off
@@ -808,9 +816,14 @@ Key points about the workflow:
   returned) and ships it to the orchestrator on each heartbeat and on release,
   so the job pages show what actually ran on the device even for jobs that
   timed out. The bare port records nothing.
-- On GitHub Actions `sair-acquire` also sends the repository and a link to the
-  run (from `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, ...), which the dashboards show
-  per job. Elsewhere pass `--repo` and `--run-url`.
+- On GitHub Actions `sair-acquire` also sends the repository, a link to the
+  run, the job id, run attempt, commit and workflow (from `GITHUB_REPOSITORY`,
+  `GITHUB_RUN_ID`, `GITHUB_JOB`, `GITHUB_RUN_ATTEMPT`, `GITHUB_SHA`,
+  `GITHUB_WORKFLOW`), which the dashboards show per job. Elsewhere pass
+  `--repo`, `--run-url`, `--job`, `--run-attempt`, `--sha` and `--workflow`.
+  `GITHUB_JOB` is the same for every leg of a matrix job, so set `SAIR_STAGE`
+  (e.g. `SAIR_STAGE: api-${{ matrix.api }}`) or pass `--stage` to tell the legs
+  apart. A proxy older than these fields ignores them.
 - Outside Actions, use `ACQUIRE_OUTPUT=$(sair-acquire)` instead of
   `eval $(sair-acquire)` so a failed acquire fails the step, then `eval` the
   output on success.

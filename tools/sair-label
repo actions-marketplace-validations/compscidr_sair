@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# sair-label — Add labels to a held lock, for labels only known after the
+# serials are granted (e.g. which phone is the group owner).
+#
+# Usage:
+#   sair-label suite=smoke                       # label the whole lease
+#   sair-label DEVICE_A:role=group-owner DEVICE_B:role=client
+#
+# Labeling the same key again replaces its value.
+#
+# Environment variables (set by sair-acquire):
+#   SAIR_LOCK_ID     Lock to label
+#   SAIR_PROXY_URL   Proxy HTTP API URL
+#   SAIR_API_KEY     API key for authentication
+#
+set -euo pipefail
+
+TOOLS_VERSION="dev" # release.yml stamps the release tag here
+
+PROXY_URL="${SAIR_PROXY_URL:-http://localhost:8550}"
+API_KEY="${SAIR_API_KEY:-dev-key-123}"
+LOCK_ID="${SAIR_LOCK_ID:-}"
+LABELS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --lock-id)
+            LOCK_ID="$2"
+            shift 2
+            ;;
+        --url)
+            PROXY_URL="$2"
+            shift 2
+            ;;
+        --api-key)
+            API_KEY="$2"
+            shift 2
+            ;;
+        --version|-v)
+            # Stamped by release.yml; from the action, its ref; from a checkout at a tag, that tag.
+            [[ "$TOOLS_VERSION" != dev ]] || TOOLS_VERSION="${SAIR_TOOLS_VERSION:-$(git -C "$(dirname "$0")" describe --tags --exact-match 2>/dev/null || echo dev)}"
+            echo "$TOOLS_VERSION"
+            exit 0
+            ;;
+        --help|-h)
+            echo "Usage: sair-label [SERIAL:]K=V... [--lock-id ID] [--url URL] [--api-key KEY] [--version]" >&2
+            echo "" >&2
+            echo "Adds labels to a lock acquired by sair-acquire. K=V labels the lease," >&2
+            echo "SERIAL:K=V one of its devices. Labeling a key again replaces its value." >&2
+            echo "" >&2
+            echo "Options:" >&2
+            echo "  --lock-id ID   Lock to label (default: \$SAIR_LOCK_ID)" >&2
+            echo "  --url URL      Proxy API URL (default: \$SAIR_PROXY_URL)" >&2
+            echo "  --api-key KEY  API key (default: \$SAIR_API_KEY or dev-key-123)" >&2
+            exit 0
+            ;;
+        *?=*)
+            LABELS+=("$1")
+            shift
+            ;;
+        *)
+            echo "sair-label: ERROR: expected K=V or SERIAL:K=V, got '$1'" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ ${#LABELS[@]} -eq 0 ]]; then
+    echo "sair-label: ERROR: no labels given" >&2
+    exit 1
+fi
+if [[ -z "$LOCK_ID" ]]; then
+    echo "sair-label: ERROR: no lock ID specified (set SAIR_LOCK_ID or use --lock-id)" >&2
+    exit 1
+fi
+
+CURL_ARGS=(-s -X POST -H "x-api-key: ${API_KEY}" -w '\n%{http_code}' -G
+    --data-urlencode "lock_id=${LOCK_ID}")
+for l in "${LABELS[@]}"; do CURL_ARGS+=(--data-urlencode "label=${l}"); done
+RESPONSE=$(curl "${CURL_ARGS[@]}" "${PROXY_URL}/label") || {
+    echo "sair-label: ERROR: failed to contact proxy" >&2
+    exit 1
+}
+HTTP_STATUS=$(printf '%s\n' "$RESPONSE" | tail -n1)
+BODY=$(printf '%s\n' "$RESPONSE" | sed '$d')
+
+case "$HTTP_STATUS" in
+    200)
+        echo "sair-label: labeled lock ${LOCK_ID}: ${LABELS[*]}" >&2
+        ;;
+    404)
+        # A proxy that predates labels has no /label route at all.
+        echo "sair-label: ERROR: lock ${LOCK_ID} not found, or the proxy is too old for labels: ${BODY}" >&2
+        exit 1
+        ;;
+    *)
+        echo "sair-label: ERROR: HTTP ${HTTP_STATUS}: ${BODY}" >&2
+        exit 1
+        ;;
+esac
