@@ -350,6 +350,27 @@ func (r *CommandRouter) ResetBluetooth(serial string) error {
 	return err
 }
 
+// HoldUpdates disables (hold) or re-enables a local device's Play Store
+// through its device source (sair#151). NotFound for a device this proxy
+// has no source for.
+func (r *CommandRouter) HoldUpdates(serial string, hold bool) error {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, err = client.HoldUpdates(ctx, &dspb.HoldUpdatesRequest{Serial: serial, Hold: hold})
+	return err
+}
+
 // RecentDeviceSourceLog returns the device source's recent log lines about
 // a local device, for a failure's lock log excerpt.
 func (r *CommandRouter) RecentDeviceSourceLog(serial string) ([]string, error) {

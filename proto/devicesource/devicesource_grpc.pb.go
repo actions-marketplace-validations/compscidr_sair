@@ -32,6 +32,7 @@ const (
 	DeviceSource_RebootIfWedged_FullMethodName    = "/devicesource.DeviceSource/RebootIfWedged"
 	DeviceSource_ClearUiAutomation_FullMethodName = "/devicesource.DeviceSource/ClearUiAutomation"
 	DeviceSource_RecentLog_FullMethodName         = "/devicesource.DeviceSource/RecentLog"
+	DeviceSource_HoldUpdates_FullMethodName       = "/devicesource.DeviceSource/HoldUpdates"
 )
 
 // DeviceSourceClient is the client API for DeviceSource service.
@@ -90,6 +91,13 @@ type DeviceSourceClient interface {
 	// so the proxy can attach them to a lock log when an acquire or a release
 	// reset fails on that device (sair#97).
 	RecentLog(ctx context.Context, in *RecentLogRequest, opts ...grpc.CallOption) (*RecentLogResponse, error)
+	// Disable the Play Store for a lease (hold) or enable it again (release),
+	// so an auto-update of Play services cannot force-stop the app under test
+	// mid-job (sair#151); updates install between leases. Unimplemented for a
+	// phone without the Play Store or below Android 5, whose pm crashes on it;
+	// FailedPrecondition when the phone refuses (Xiaomi: "Cannot disable
+	// system packages").
+	HoldUpdates(ctx context.Context, in *HoldUpdatesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type deviceSourceClient struct {
@@ -241,6 +249,16 @@ func (c *deviceSourceClient) RecentLog(ctx context.Context, in *RecentLogRequest
 	return out, nil
 }
 
+func (c *deviceSourceClient) HoldUpdates(ctx context.Context, in *HoldUpdatesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, DeviceSource_HoldUpdates_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeviceSourceServer is the server API for DeviceSource service.
 // All implementations must embed UnimplementedDeviceSourceServer
 // for forward compatibility.
@@ -297,6 +315,13 @@ type DeviceSourceServer interface {
 	// so the proxy can attach them to a lock log when an acquire or a release
 	// reset fails on that device (sair#97).
 	RecentLog(context.Context, *RecentLogRequest) (*RecentLogResponse, error)
+	// Disable the Play Store for a lease (hold) or enable it again (release),
+	// so an auto-update of Play services cannot force-stop the app under test
+	// mid-job (sair#151); updates install between leases. Unimplemented for a
+	// phone without the Play Store or below Android 5, whose pm crashes on it;
+	// FailedPrecondition when the phone refuses (Xiaomi: "Cannot disable
+	// system packages").
+	HoldUpdates(context.Context, *HoldUpdatesRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedDeviceSourceServer()
 }
 
@@ -342,6 +367,9 @@ func (UnimplementedDeviceSourceServer) ClearUiAutomation(context.Context, *UiAut
 }
 func (UnimplementedDeviceSourceServer) RecentLog(context.Context, *RecentLogRequest) (*RecentLogResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecentLog not implemented")
+}
+func (UnimplementedDeviceSourceServer) HoldUpdates(context.Context, *HoldUpdatesRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method HoldUpdates not implemented")
 }
 func (UnimplementedDeviceSourceServer) mustEmbedUnimplementedDeviceSourceServer() {}
 func (UnimplementedDeviceSourceServer) testEmbeddedByValue()                      {}
@@ -555,6 +583,24 @@ func _DeviceSource_RecentLog_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DeviceSource_HoldUpdates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HoldUpdatesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).HoldUpdates(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_HoldUpdates_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).HoldUpdates(ctx, req.(*HoldUpdatesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DeviceSource_ServiceDesc is the grpc.ServiceDesc for DeviceSource service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -597,6 +643,10 @@ var DeviceSource_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RecentLog",
 			Handler:    _DeviceSource_RecentLog_Handler,
+		},
+		{
+			MethodName: "HoldUpdates",
+			Handler:    _DeviceSource_HoldUpdates_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

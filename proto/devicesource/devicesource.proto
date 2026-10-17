@@ -58,6 +58,18 @@ service DeviceSource {
   // so the proxy can attach them to a lock log when an acquire or a release
   // reset fails on that device (sair#97).
   rpc RecentLog(RecentLogRequest) returns (RecentLogResponse) {}
+  // Disable the Play Store for a lease (hold) or enable it again (release),
+  // so an auto-update of Play services cannot force-stop the app under test
+  // mid-job (sair#151); updates install between leases. Unimplemented for a
+  // phone without the Play Store or below Android 5, whose pm crashes on it;
+  // FailedPrecondition when the phone refuses (Xiaomi: "Cannot disable
+  // system packages").
+  rpc HoldUpdates(HoldUpdatesRequest) returns (google.protobuf.Empty) {}
+}
+
+message HoldUpdatesRequest {
+  string serial = 1;
+  bool hold = 2;
 }
 
 message RecentLogRequest {

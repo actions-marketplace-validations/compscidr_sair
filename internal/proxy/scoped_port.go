@@ -114,6 +114,8 @@ type ScopedPortManager struct {
 	wake func(serial string) error
 	// resetBluetooth is commandRouter.ResetBluetooth; tests swap it.
 	resetBluetooth func(serial string) error
+	// holdUpdates is commandRouter.HoldUpdates; tests swap it.
+	holdUpdates func(serial string, hold bool) error
 	// btFresh holds the serials whose release reset left Bluetooth freshly
 	// cycled (or rebooted), so the next acquire need not cycle it again.
 	btFresh sync.Map
@@ -169,6 +171,7 @@ func NewScopedPortManager(
 		clearUiAutomation:     commandRouter.ClearUiAutomation,
 		wake:                  commandRouter.Wake,
 		resetBluetooth:        commandRouter.ResetBluetooth,
+		holdUpdates:           commandRouter.HoldUpdates,
 		rebootIfStale:         commandRouter.RebootIfStale,
 		rebootIfWedged:        commandRouter.RebootIfWedged,
 		event:                 commandRouter.Event,
@@ -231,6 +234,7 @@ func (m *ScopedPortManager) Acquire(ctx context.Context, requestedSerials map[st
 		if _, fresh := m.btFresh.LoadAndDelete(serial); !fresh {
 			m.cycleBluetooth(sp, serial, " (no release reset since the last job)")
 		}
+		m.setUpdates(sp, serial, true)
 		err := m.wakeDevice(sp.LockID, serial)
 		mu.Unlock()
 		if wakeFailed(err) {
@@ -484,7 +488,8 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool, ba
 
 // resetDevices returns a closed port's devices to baseline: no reverse
 // forwards, the job's packages gone, rebooted if its uptime is over the
-// bench's limit, Wi-Fi reset, Bluetooth cycled, awake and unlocked. A device a newer lock
+// bench's limit, Wi-Fi reset, Bluetooth cycled, awake and unlocked, Play Store
+// enabled again. A device a newer lock
 // already holds is skipped: its job owns the state now.
 func (m *ScopedPortManager) resetDevices(sp *ScopedPort) {
 	for serial := range sp.Serials {
@@ -552,8 +557,30 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 		slog.Warn("wake after release failed; the next acquire of this phone will fail until it is fixed", "serial", serial, "lockId", lockID, "error", err)
 		failed = true
 	}
+	m.setUpdates(sp, serial, false)
 	if failed {
 		m.logExcerpt(sp, []string{serial})
+	}
+}
+
+// setUpdates holds (on acquire) or resumes (on release) a phone's Play
+// Store auto-updates (sair#151) and says so in sp's lock log. A failure
+// costs nothing but the line: the job may still get through. A relayed
+// device, a phone without the Play Store and an older device source are
+// skipped. The caller holds the serial's lock.
+func (m *ScopedPortManager) setUpdates(sp *ScopedPort, serial string, hold bool) {
+	err := m.holdUpdates(serial, hold)
+	switch c := status.Code(err); {
+	case c == codes.NotFound, c == codes.Unimplemented:
+	case err == nil && hold:
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Play Store disabled for the lease (auto-updates resume on release)"})
+	case err == nil:
+	case hold:
+		slog.Warn("could not disable the Play Store; an auto-update can kill the app under test", "serial", serial, "lockId", sp.LockID, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Play Store not disabled, an auto-update can stop the app mid-job: " + errText(err)})
+	default:
+		slog.Warn("could not re-enable the Play Store; the phone gets no app updates until it is", "serial", serial, "lockId", sp.LockID, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Play Store not re-enabled: " + errText(err)})
 	}
 }
 

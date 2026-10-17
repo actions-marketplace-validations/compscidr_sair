@@ -248,6 +248,16 @@ you:
   cycle succeeds, but does not fail the acquire, since most jobs never use
   Bluetooth. Bluetooth is always left on. Phones without the adapter dump
   (Android 4.x) are skipped.
+- **No Play Store updates during a lease**: on acquire the Play Store is
+  disabled (`pm disable-user com.android.vending`) and on release it is
+  enabled again, so updates install between leases. An update of Google
+  Play services force-stops every app that uses it, the app under
+  instrumentation included, which fails a job with `Process crashed`. The
+  lock log gets `sair: Play Store disabled for the lease`. A phone that
+  refuses (Xiaomi: `Cannot disable system packages`) says so in the lock log
+  and keeps the lock. Phones without the Play Store and Android 4.x (whose
+  `pm` crashes on it) are skipped. A job that needs the Play Store itself
+  (billing, in-app updates, Play Integrity) cannot use it on these phones.
 - **Rebooted when a radio is wedged**: each `svc wifi` / `svc bluetooth`
   toggle and radio state read is bounded (15 s). When the Wi-Fi reset or the
   Bluetooth cycle fails, the device source probes the radio's service

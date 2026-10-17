@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -431,6 +432,48 @@ func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("lock log has no reboot line: %v", fake.lastRelease.GetLog())
+	}
+}
+
+// The Play Store is disabled for the lease and enabled again as the last
+// release step (sair#151); a phone that refuses says so in the lock log but
+// keeps the lock.
+func TestPlayStoreHeldForTheLease(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	var steps []string
+	m.removeReverse = func(string) error { return nil }
+	m.resetPackages = func(string) ([]string, []string, error) { return nil, nil, nil }
+	m.rebootIfStale = func(string) (bool, time.Duration, error) { return false, time.Hour, nil }
+	m.setWifi = func(_ string, st dspb.WifiRequest_State, _ string) error { steps = append(steps, "wifi "+st.String()); return nil }
+	m.wake = func(string) error { steps = append(steps, "wake"); return nil }
+	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return nil }
+	m.holdUpdates = func(_ string, hold bool) error {
+		steps = append(steps, "hold "+strconv.FormatBool(hold))
+		if hold {
+			return status.Error(codes.FailedPrecondition, "A: pm disable-user com.android.vending: java.lang.SecurityException: Cannot disable system packages.")
+		}
+		return nil
+	}
+	if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, false, "", false, "", ""); err != nil {
+		t.Fatalf("a refused hold cost the lock: %v", err)
+	}
+	if want := []string{"bluetooth", "hold true", "wake", "wifi OFF"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("acquire steps = %q, want %q", steps, want)
+	}
+	steps = nil
+	m.Release("L1", "ok")
+	if want := []string{"wifi RESET", "bluetooth", "wake", "hold false"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("release steps = %q, want %q", steps, want)
+	}
+	var lines []string
+	for _, e := range fake.lastRelease.GetLog() {
+		if strings.Contains(e.Service, "Play Store") {
+			lines = append(lines, e.Service)
+		}
+	}
+	if want := []string{"sair: Play Store not disabled, an auto-update can stop the app mid-job: A: pm disable-user com.android.vending: java.lang.SecurityException: Cannot disable system packages."}; !reflect.DeepEqual(lines, want) {
+		t.Errorf("lock log Play Store lines = %q, want %q", lines, want)
 	}
 }
 
