@@ -30,7 +30,7 @@ func fakeShell(s *Server, outputs map[string]string, fail ...string) *[]string {
 }
 
 const (
-	statusConnected    = "Wifi is enabled\nWifi scanning is always available\nWifi is connected to \"it's here\"\nWifiInfo: SSID: \"it's here\", BSSID: 00:11:22:33:44:55\n"
+	statusConnected    = "Wifi is enabled\nWifi scanning is always available\nWifi is connected to \"it's here\"\nWifiInfo: SSID: \"it's here\", BSSID: 00:11:22:33:44:55, RSSI: -50, Frequency: 2462MHz, Net ID: 0\n"
 	statusNotConnected = "Wifi is enabled\nWifi scanning is always available\nWifi is not connected\n"
 	statusDisabled     = "Wifi is disabled\nWifi scanning is only available when wifi is enabled\n"
 	connectivityWifi   = "Active default network: 100\nCurrent Networks:\n  NetworkAgentInfo{ ni{[type: WIFI[], state: CONNECTED/CONNECTED]}  network{100}  nc{[ Transports: WIFI Capabilities: NOT_METERED&INTERNET&VALIDATED ]} }\n"
@@ -195,6 +195,7 @@ func TestWifiJoinStats(t *testing.T) {
 // A band pins the suggestion to the strongest BSSID of the bench SSID in it,
 // fails clearly when the phone does not see one, and is refused off ON (sair#143).
 // The strongest line has per-chain RSSI, as Pixels on Android 16+ print (sair#149).
+// The old suggestions go first, and a phone left on another band is not online (sair#152).
 func TestSetWifiPinsBand(t *testing.T) {
 	scan := "    BSSID              Frequency      RSSI           Age(sec)     SSID                                 Flags\n" +
 		"  00:00:00:00:00:01       2412        -70              1.220    it's here                         [WPA2-PSK-CCMP-128][ESS]\n" +
@@ -211,12 +212,20 @@ func TestSetWifiPinsBand(t *testing.T) {
 	if _, err := s.SetWifi(context.Background(), &pb.WifiRequest{Serial: "ABC", State: pb.WifiRequest_ON, Band: "2.4"}); err != nil {
 		t.Fatal(err)
 	}
-	if want := `cmd wifi add-suggestion 'it'\''s here' wpa2 'pw' -b '00:00:00:00:00:02'`; !slices.Contains(*cmds, want) {
-		t.Errorf("commands %q, want %q", *cmds, want)
+	add := `cmd wifi add-suggestion 'it'\''s here' wpa2 'pw' -b '00:00:00:00:00:02'`
+	if i := slices.Index(*cmds, add); i < 2 || (*cmds)[i-2] != "cmd wifi remove-all-suggestions" {
+		t.Errorf("commands %q, want remove-all-suggestions then %q", *cmds, add)
 	}
 
 	s, _ = newServer()
-	_, err := s.SetWifi(context.Background(), &pb.WifiRequest{Serial: "ABC", State: pb.WifiRequest_ON, Band: "6"})
+	fakeShell(s, map[string]string{"cmd wifi list-scan-results": scan, "cmd wifi status": strings.Replace(statusConnected, "2462MHz", "6295MHz", 1), "dumpsys connectivity": connectivityWifi})
+	_, err := s.SetWifi(context.Background(), &pb.WifiRequest{Serial: "ABC", State: pb.WifiRequest_ON, Band: "2.4"})
+	if status.Code(err) != codes.DeadlineExceeded || !strings.Contains(err.Error(), "associated on 6295 MHz, not 2.4 GHz") {
+		t.Errorf("left on 6 GHz: err = %v", err)
+	}
+
+	s, _ = newServer()
+	_, err = s.SetWifi(context.Background(), &pb.WifiRequest{Serial: "ABC", State: pb.WifiRequest_ON, Band: "6"})
 	if status.Code(err) != codes.DeadlineExceeded || !strings.Contains(err.Error(), `does not see Wi-Fi "it's here" on 6 GHz`) {
 		t.Errorf("6 GHz not in range: err = %v", err)
 	}

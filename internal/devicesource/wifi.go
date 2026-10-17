@@ -92,7 +92,10 @@ func (s *Server) wifiForget(ctx context.Context, serial string) error {
 // wifiConnect suggests the bench network and waits until the device is
 // online on it (see checkOnline), so a job never gets a phone that is still
 // associating, or one that answers a ping over some other network. With a
-// band the suggestion is pinned to one BSSID in it (sair#143).
+// band the suggestion is pinned to one BSSID in it (sair#143), and the old
+// suggestions and saved networks are forgotten first: a phone already online
+// on another band otherwise stays there, as adding a suggestion does not
+// drop the current BSSID (sair#152).
 func (s *Server) wifiConnect(ctx context.Context, serial, band string) error {
 	add := "cmd wifi add-suggestion " + shellQuote(s.wifiSSID) + " open"
 	if s.wifiPassphrase != "" {
@@ -101,6 +104,9 @@ func (s *Server) wifiConnect(ctx context.Context, serial, band string) error {
 	if band != "" {
 		bssid, err := s.wifiPickBSSID(ctx, serial, band)
 		if err != nil {
+			return err
+		}
+		if err := s.wifiForget(ctx, serial); err != nil {
 			return err
 		}
 		add += " -b " + shellQuote(bssid)
@@ -114,7 +120,7 @@ func (s *Server) wifiConnect(ctx context.Context, serial, band string) error {
 	start := time.Now()
 	var last error
 	err := s.waitFor(ctx, s.wifiTimeout, fmt.Sprintf("%s not online on Wi-Fi %q", serial, s.wifiSSID), func() error {
-		last = s.checkOnline(ctx, serial)
+		last = s.checkOnline(ctx, serial, band)
 		return last
 	})
 	if ctx.Err() == nil { // a cancelled job says nothing about the phone
@@ -326,8 +332,9 @@ func (s *Server) waitFor(ctx context.Context, timeout time.Duration, what string
 // checkOnline is the ON contract (sair#87): associated to the bench SSID,
 // that Wi-Fi is the validated default network (Android's own verdict, so the
 // app under test sees it as online too), and wifiPingHost answers, which with
-// a hostname also proves DNS. nil when all three hold, else why not.
-func (s *Server) checkOnline(ctx context.Context, serial string) error {
+// a hostname also proves DNS. With a band the association must be in it too.
+// nil when all hold, else why not.
+func (s *Server) checkOnline(ctx context.Context, serial, band string) error {
 	st, err := s.wifiStatus(ctx, serial)
 	if err != nil {
 		return err
@@ -339,6 +346,8 @@ func (s *Server) checkOnline(ctx context.Context, serial string) error {
 		return errNotAssociated
 	case st.ssid != s.wifiSSID:
 		return fmt.Errorf("%w %q, not %q", errOtherSSID, st.ssid, s.wifiSSID)
+	case band != "" && (st.freq < wifiBands[band][0] || st.freq > wifiBands[band][1]):
+		return fmt.Errorf("associated on %d MHz, not %s GHz", st.freq, band)
 	}
 	out, err := s.shell(ctx, serial, "dumpsys connectivity")
 	if err != nil {
@@ -385,6 +394,7 @@ func (s *Server) checkOffline(ctx context.Context, serial string, radioOn bool) 
 type wifiStatusInfo struct {
 	enabled bool
 	ssid    string // "" when not associated
+	freq    int    // MHz, 0 when not associated
 }
 
 func (s *Server) wifiStatus(ctx context.Context, serial string) (wifiStatusInfo, error) {
@@ -399,6 +409,7 @@ func (s *Server) wifiStatus(ctx context.Context, serial string) (wifiStatusInfo,
 //
 //	Wifi is enabled
 //	Wifi is connected to "bench"      (or: Wifi is not connected)
+//	WifiInfo: SSID: "bench", BSSID: ..., Frequency: 6295MHz, ...
 func parseWifiStatus(out string) wifiStatusInfo {
 	var st wifiStatusInfo
 	for _, line := range strings.Split(out, "\n") {
@@ -407,6 +418,8 @@ func parseWifiStatus(out string) wifiStatusInfo {
 			st.enabled = true
 		} else if ssid, ok := strings.CutPrefix(line, "Wifi is connected to "); ok {
 			st.ssid = strings.Trim(ssid, `"`)
+		} else if _, rest, ok := strings.Cut(line, "Frequency: "); ok && strings.HasPrefix(line, "WifiInfo:") {
+			st.freq, _ = strconv.Atoi(strings.SplitN(rest, "MHz", 2)[0])
 		}
 	}
 	return st
