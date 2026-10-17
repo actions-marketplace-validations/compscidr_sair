@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# sair-locks — List the device locks your account holds, and the ones that
+# ended in the last hour with how they ended.
+#
+# Asks the orchestrator directly, so it sees every proxy and every key on the
+# account (KEY is the key's name in the portal; * marks the calling key).
+#
+# Usage:
+#   sair-locks                   # table of live, queued and recently ended locks
+#   sair-locks --json            # the orchestrator's raw answer
+#   sair-locks --release-mine    # release every live lock taken with this key
+#
+# Environment variables:
+#   SAIR_ORCHESTRATOR_URL   Orchestrator HTTP URL (default: https://orchestrator.sair.run)
+#   SAIR_API_KEY            API key for authentication (default: dev-key-123)
+#
+set -euo pipefail
+
+TOOLS_VERSION="dev" # release.yml stamps the release tag here
+
+URL="${SAIR_ORCHESTRATOR_URL:-https://orchestrator.sair.run}"
+API_KEY="${SAIR_API_KEY:-dev-key-123}"
+MODE="table"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json)
+            MODE="json"
+            shift
+            ;;
+        --release-mine)
+            MODE="release"
+            shift
+            ;;
+        --url)
+            URL="$2"
+            shift 2
+            ;;
+        --api-key)
+            API_KEY="$2"
+            shift 2
+            ;;
+        --version|-v)
+            [[ "$TOOLS_VERSION" != dev ]] || TOOLS_VERSION="${SAIR_TOOLS_VERSION:-$(git -C "$(dirname "$0")" describe --tags --exact-match 2>/dev/null || echo dev)}"
+            echo "$TOOLS_VERSION"
+            exit 0
+            ;;
+        --help|-h)
+            echo "Usage: sair-locks [--json | --release-mine] [--url URL] [--api-key KEY] [--version]" >&2
+            echo "" >&2
+            echo "Lists the locks your account holds and the ones that ended in the last hour." >&2
+            echo "" >&2
+            echo "Options:" >&2
+            echo "  --json          Print the orchestrator's JSON instead of a table" >&2
+            echo "  --release-mine  Release every live lock taken with this key" >&2
+            echo "  --url URL       Orchestrator URL (default: \$SAIR_ORCHESTRATOR_URL or https://orchestrator.sair.run)" >&2
+            echo "  --api-key KEY   API key (default: \$SAIR_API_KEY or dev-key-123)" >&2
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+URL="${URL%/}"
+BODY=$(curl -sS -w '\n%{http_code}' -H "x-api-key: ${API_KEY}" "${URL}/locks/status") || {
+    echo "sair-locks: ERROR: failed to contact orchestrator at ${URL}" >&2
+    exit 1
+}
+HTTP_STATUS="${BODY##*$'\n'}"
+BODY="${BODY%$'\n'*}"
+if [[ "$HTTP_STATUS" != 200 ]]; then
+    echo "sair-locks: ERROR: HTTP ${HTTP_STATUS}: ${BODY}" >&2
+    exit 1
+fi
+
+if [[ "$MODE" == json ]]; then
+    echo "$BODY"
+    exit 0
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "sair-locks: ERROR: python3 is needed to read the answer (or use --json)" >&2
+    exit 1
+fi
+
+if [[ "$MODE" == release ]]; then
+    IDS=$(python3 -c 'import json,sys; print("\n".join(l["lock_id"] for l in json.load(sys.stdin)["locks"] if l.get("mine")))' <<<"$BODY")
+    if [[ -z "$IDS" ]]; then
+        echo "sair-locks: this key holds no locks" >&2
+        exit 0
+    fi
+    FAILED=0
+    while read -r id; do
+        code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "x-api-key: ${API_KEY}" \
+            -G --data-urlencode "lock_id=${id}" "${URL}/locks/release") || code=000
+        case "$code" in
+            200) echo "sair-locks: released ${id}" >&2 ;;
+            404) echo "sair-locks: ${id} already gone" >&2 ;;
+            *) echo "sair-locks: ERROR: failed to release ${id} (HTTP ${code})" >&2; FAILED=1 ;;
+        esac
+    done <<<"$IDS"
+    exit "$FAILED"
+fi
+
+python3 -c '
+import json, sys, time
+d = json.load(sys.stdin)
+now = time.time() * 1000
+
+def ago(ms):
+    s = int(max(0, now - ms) / 1000) if ms else None
+    if s is None: return "-"
+    return f"{s}s" if s < 60 else f"{s // 60}m" if s < 3600 else f"{s // 3600}h{s % 3600 // 60:02d}m"
+
+def key(l): return (l.get("key") or "-") + ("*" if l.get("mine") else "")
+def origin(l): return l.get("run_url") or l.get("repo") or "-"
+
+def table(title, header, rows):
+    print(title)
+    if not rows:
+        print("  (none)\n"); return
+    rows = [header] + rows
+    w = [max(len(r[i]) for r in rows) for i in range(len(header))]
+    for r in rows: print("  " + "  ".join(c.ljust(w[i]) for i, c in enumerate(r)).rstrip())
+    print()
+
+table("Live locks", ["LOCK", "SERIALS", "PROXY", "KEY", "HELD", "IDLE", "ORIGIN"],
+      [[l["lock_id"], ",".join(l["serials"]), l.get("proxy") or "-", key(l), ago(l.get("acquired_at")), ago(l.get("last_activity_at")), origin(l)] for l in d["locks"]])
+if d.get("queue"):
+    table("Queued", ["SERIALS", "WAITING"], [[",".join(q["serials"]), ago(now - q["waiting_ms"])] for q in d["queue"]])
+table("Ended in the last hour", ["LOCK", "SERIALS", "PROXY", "KEY", "ENDED", "HOW", "STATUS", "ORIGIN"],
+      [[l["lock_id"], ",".join(l["serials"]), l.get("proxy") or "-", key(l), ago(l.get("ended_at")) + " ago", l["ended"], l["status"], origin(l)] for l in d.get("ended", [])])
+print("* = this key. A proxy restart releases its locks as cancelled; expired = no adb activity or heartbeat until the idle timeout.")
+' <<<"$BODY"

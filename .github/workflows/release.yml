@@ -44,9 +44,10 @@ jobs:
           cp tools/sair-acquire dist/
           cp tools/sair-release dist/
           cp tools/sair-wifi dist/
+          cp tools/sair-locks dist/
           # --version on the tools reports the release they came from
-          sed -i "s/^TOOLS_VERSION=\"dev\"/TOOLS_VERSION=\"${VERSION}\"/" dist/sair-acquire dist/sair-release dist/sair-wifi
-          [ "$(grep -l "^TOOLS_VERSION=\"${VERSION}\"" dist/sair-* | wc -l)" = 3 ]
+          sed -i "s/^TOOLS_VERSION=\"dev\"/TOOLS_VERSION=\"${VERSION}\"/" dist/sair-acquire dist/sair-release dist/sair-wifi dist/sair-locks
+          [ "$(grep -l "^TOOLS_VERSION=\"${VERSION}\"" dist/sair-* | wc -l)" = 4 ]
           cp -r systemd dist/
 
       - name: Archive

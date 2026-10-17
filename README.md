@@ -31,8 +31,8 @@ CI job 3 ···  Orchestrator: job 3 waits in the queue until
 
 ## GitHub Action
 
-This repo is also a GitHub Action that puts `sair-acquire`, `sair-release` and
-`sair-wifi` on `PATH`. The tools need an orchestrator account: sign up at
+This repo is also a GitHub Action that puts `sair-acquire`, `sair-release`,
+`sair-wifi` and `sair-locks` on `PATH`. The tools need an orchestrator account: sign up at
 [sair.run](https://sair.run) to get an API key, store it as the repository
 secret `SAIR_API_KEY`, and set the repository variable `SAIR_PROXY_URL` to
 your bench's proxy (see [Run](#run)). Then:
@@ -487,7 +487,7 @@ the field and records the lock under the owner.
 
 On GitHub Actions, `uses: compscidr/sair@v0.0.21` (or any later release tag)
 puts the tools on `PATH`; see the workflow example below. Elsewhere, copy
-`tools/sair-acquire`, `tools/sair-release` and `tools/sair-wifi` into your CI project or add this
+`tools/sair-acquire`, `tools/sair-release`, `tools/sair-wifi` and `tools/sair-locks` into your CI project or add this
 repo's `tools/` directory to `PATH`.
 
 **Acquire** a device lock (blocks until devices are available):
@@ -552,6 +552,13 @@ eval $(sair-acquire --url http://proxy-host:8550 --api-key my-key)
 
 # Release with explicit lock ID
 sair-release --lock-id <lock-id>
+
+# Every lock your account holds (all proxies, all keys) and the ones that
+# ended in the last hour, with how; asks the orchestrator, not the proxy
+# (SAIR_ORCHESTRATOR_URL, default https://orchestrator.sair.run)
+sair-locks
+# Release every lock this key holds, e.g. after a crashed agent or killed job
+sair-locks --release-mine
 ```
 
 ### Device-side Wi-Fi control
