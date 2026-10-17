@@ -168,6 +168,7 @@ type scanResult struct {
 //
 //	  BSSID              Frequency      RSSI           Age(sec)     SSID                                 Flags
 //	aa:bb:cc:dd:ee:ff       2462        -49              1.220    bench net                         [WPA2-PSK-CCMP-128][RSN-PSK-CCMP-128][ESS]
+//	aa:bb:cc:dd:ee:fe       2427    -20(0:-28/1:-21)    75.077    bench net                         [WPA2-PSK-CCMP-128][ESS]
 func parseScanResults(out string) []scanResult {
 	var rs []scanResult
 	for _, line := range strings.Split(out, "\n") {
@@ -176,7 +177,7 @@ func parseScanResults(out string) []scanResult {
 			continue
 		}
 		freq, err1 := strconv.Atoi(f[1])
-		rssi, err2 := strconv.Atoi(f[2])
+		rssi, err2 := strconv.Atoi(strings.SplitN(f[2], "(", 2)[0]) // Pixels on Android 16+ add per-chain values: -20(0:-28/1:-21)
 		if err1 != nil || err2 != nil {
 			continue
 		}

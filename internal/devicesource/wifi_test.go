@@ -194,10 +194,11 @@ func TestWifiJoinStats(t *testing.T) {
 
 // A band pins the suggestion to the strongest BSSID of the bench SSID in it,
 // fails clearly when the phone does not see one, and is refused off ON (sair#143).
+// The strongest line has per-chain RSSI, as Pixels on Android 16+ print (sair#149).
 func TestSetWifiPinsBand(t *testing.T) {
 	scan := "    BSSID              Frequency      RSSI           Age(sec)     SSID                                 Flags\n" +
 		"  00:00:00:00:00:01       2412        -70              1.220    it's here                         [WPA2-PSK-CCMP-128][ESS]\n" +
-		"  00:00:00:00:00:02       2462        -50              1.220    it's here                         [WPA2-PSK-CCMP-128][ESS]\n" +
+		"  00:00:00:00:00:02       2462    -50(0:-58/1:-51)    75.077    it's here                         [WPA2-PSK-CCMP-128][ESS]\n" +
 		"  00:00:00:00:00:03       2437        -20              1.220    Cafe                              [ESS]\n" +
 		"  00:00:00:00:00:04       2437        -10              1.362                                      [ESS]\n" +
 		"  00:00:00:00:00:05       5180        -30              1.220    it's here                         [WPA2-PSK-CCMP-128][ESS]\n"
