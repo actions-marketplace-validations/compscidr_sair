@@ -559,3 +559,18 @@ func TestReleaseRebootsAWedgedRadioAndResetsAgain(t *testing.T) {
 		}
 	}
 }
+
+// A proxy shutting down releases its locks as "proxy_restart" (sair#137), so
+// the lock list tells it apart from a cancelled job.
+func TestShutdownAllReleasesAsProxyRestart(t *testing.T) {
+	f := newFakeSessionServer()
+	m, _ := newManagerOnSession(t, f, 1)
+	if _, err := m.CreateScopedPort("lock-1", map[string]struct{}{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	m.ShutdownAll()
+	waitFor(t, "shutdown release", func() bool { return f.release() != nil })
+	if rel := f.release(); rel.LockId != "lock-1" || rel.Status != "proxy_restart" {
+		t.Errorf("release = %+v", rel)
+	}
+}
