@@ -1,7 +1,9 @@
 package devicesource
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -34,34 +36,108 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 	if s.rebootAfter <= 0 || uptime < s.rebootAfter {
 		return resp, nil
 	}
+	slog.Info("uptime over the limit; rebooting", "serial", req.Serial, "uptime", uptime.Round(time.Minute), "limit", s.rebootAfter)
+	if err := s.reboot(ctx, req.Serial); errors.Is(err, errUnsafeReboot) {
+		slog.Warn("uptime reboot skipped: "+err.Error(), "serial", req.Serial, "uptime", uptime.Round(time.Minute))
+		return resp, nil
+	} else if err != nil {
+		return nil, err
+	}
+	resp.Rebooted = true
+	slog.Info("rebooted", "serial", req.Serial)
+	return resp, nil
+}
+
+// radioServices maps a WedgedRadioRequest's radio to the service its probe
+// dumps.
+var radioServices = map[string]string{"wifi": "wifi", "bluetooth": "bluetooth_manager"}
+
+// RebootIfWedged (sair#139) reboots a phone whose radio reset just failed
+// when that radio's service no longer answers: a framework wedged at the
+// driver or HAL level, which hangs `svc` and which no toggle clears. A
+// service that answers is left alone, since some phones hang on `svc` with
+// healthy radios (Galaxy A13, Android 12). The caller re-runs the reset.
+func (s *Server) RebootIfWedged(ctx context.Context, req *pb.WedgedRadioRequest) (*pb.RebootResponse, error) {
+	if err := s.checkSerial(req.Serial); err != nil {
+		return nil, err
+	}
+	service, ok := radioServices[req.Radio]
+	if !ok {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown radio %q", req.Radio)
+	}
+	out, err := s.radioShell(ctx, req.Serial, "dumpsys "+service)
+	if !errors.Is(err, errRadioHung) && !strings.Contains(out, "DUMP TIMEOUT") {
+		return &pb.RebootResponse{}, nil
+	}
+	slog.Warn("radio service not answering; rebooting", "serial", req.Serial, "radio", req.Radio)
+	if err := s.reboot(ctx, req.Serial); errors.Is(err, errUnsafeReboot) {
+		return nil, status.Errorf(codes.FailedPrecondition, "%s: %s wedged, and %v", req.Serial, req.Radio, err)
+	} else if err != nil {
+		return nil, err
+	}
+	return &pb.RebootResponse{Rebooted: true}, nil
+}
+
+// errRadioHung is a radio command that did not return within radioTimeout.
+var errRadioHung = errors.New("did not return")
+
+// radioShell is shell bounded by radioTimeout (15s when unset): a command
+// that goes through a wedged radio service never returns (sair#139).
+func (s *Server) radioShell(ctx context.Context, serial, command string) (string, error) {
+	timeout := cmp.Or(s.radioTimeout, 15*time.Second)
+	c, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := s.shell(c, serial, command)
+	if err != nil && c.Err() != nil && ctx.Err() == nil {
+		err = fmt.Errorf("%w within %s", errRadioHung, timeout)
+	}
+	return out, err
+}
+
+// svc runs `svc <args>` bounded. A hang alone is not an error: some phones
+// hang on svc with healthy radios, so the state wait after it decides, and
+// a radio that never gets there goes to RebootIfWedged.
+func (s *Server) svc(ctx context.Context, serial, args string) error {
+	_, err := s.radioShell(ctx, serial, "svc "+args)
+	if errors.Is(err, errRadioHung) {
+		slog.Warn("svc "+args+" "+err.Error()+"; going by the radio's state", "serial", serial)
+		return nil
+	}
+	return err
+}
+
+// errUnsafeReboot wraps why a phone was left up: a reboot would strand it.
+var errUnsafeReboot = errors.New("unsafe to reboot")
+
+// reboot reboots serial, waits until it has booted and records the reboot.
+// An error wrapping errUnsafeReboot means it was not rebooted because it
+// would come back to a lock screen sair cannot get past.
+func (s *Server) reboot(ctx context.Context, serial string) error {
 	// A phone with a PIN, pattern or password boots to "unlock to start",
 	// which no dismiss-keyguard gets past: a reboot would turn a phone that
 	// works today into one a human has to visit. Leave it up and say so.
-	out, err = s.shell(ctx, req.Serial, "dumpsys window policy")
+	secure, err := s.secureLock(ctx, serial)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "%s: dumpsys window policy: %v", req.Serial, err)
+		return status.Errorf(codes.Internal, "%s: %v", serial, err)
 	}
-	switch dumpsysField(out, "secure=") {
+	switch secure {
 	case "false":
 	case "true":
-		slog.Warn("uptime reboot skipped: a secure lock is set, and sair could not unlock the phone after a reboot. Set Settings > Lock screen > Screen lock type to Swipe or None", "serial", req.Serial, "uptime", uptime.Round(time.Minute))
-		return resp, nil
+		return fmt.Errorf("%w: a secure lock is set, and sair could not unlock the phone after a reboot. Set Settings > Lock screen > Screen lock type to Swipe or None", errUnsafeReboot)
 	default:
-		slog.Warn("uptime reboot skipped: cannot tell from dumpsys window policy whether a secure lock is set on this Android version", "serial", req.Serial, "uptime", uptime.Round(time.Minute))
-		return resp, nil
+		return fmt.Errorf("%w: cannot tell from dumpsys window policy or lock_settings whether a secure lock is set on this Android version", errUnsafeReboot)
 	}
 	// The old boot_id is the whole proof that the phone went down; without
 	// it the first poll would pass on the old boot, so no reboot without it.
-	before, err := s.shell(ctx, req.Serial, "cat /proc/sys/kernel/random/boot_id")
+	before, err := s.shell(ctx, serial, "cat /proc/sys/kernel/random/boot_id")
 	if before = strings.TrimSpace(before); err != nil || before == "" {
-		return nil, status.Errorf(codes.Internal, "%s: boot_id before reboot: %v; not rebooting", req.Serial, err)
+		return status.Errorf(codes.Internal, "%s: boot_id before reboot: %v; not rebooting", serial, err)
 	}
-	slog.Info("rebooting: uptime over the limit", "serial", req.Serial, "uptime", uptime.Round(time.Minute), "limit", s.rebootAfter)
 	// The connection drops as the phone goes down, so the command's own
 	// error says nothing; the boot_id changing is what proves it rebooted.
-	s.shell(ctx, req.Serial, "reboot")
-	err = s.waitFor(ctx, s.rebootTimeout, req.Serial+" not back after reboot", func() error {
-		out, err := s.shell(ctx, req.Serial, "cat /proc/sys/kernel/random/boot_id; getprop sys.boot_completed")
+	s.shell(ctx, serial, "reboot")
+	err = s.waitFor(ctx, s.rebootTimeout, serial+" not back after reboot", func() error {
+		out, err := s.shell(ctx, serial, "cat /proc/sys/kernel/random/boot_id; getprop sys.boot_completed")
 		if err != nil {
 			return err
 		}
@@ -75,17 +151,40 @@ func (s *Server) RebootIfStale(ctx context.Context, req *pb.RebootRequest) (*pb.
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	resp.Rebooted = true
 	s.stateMu.Lock()
 	if s.reboots == nil {
 		s.reboots = make(map[string]time.Time)
 	}
-	s.reboots[req.Serial] = time.Now()
+	s.reboots[serial] = time.Now()
 	s.stateMu.Unlock()
-	slog.Info("rebooted", "serial", req.Serial)
-	return resp, nil
+	return nil
+}
+
+// secureLock is "true" when serial has a PIN, pattern or password, "false"
+// when its lock screen is Swipe or None, and "" when no dump says.
+func (s *Server) secureLock(ctx context.Context, serial string) (string, error) {
+	out, err := s.shell(ctx, serial, "dumpsys window policy")
+	if err != nil {
+		return "", fmt.Errorf("dumpsys window policy: %w", err)
+	}
+	if v := dumpsysField(out, "secure="); v != "" {
+		return v, nil
+	}
+	// Android 17 dropped secure= from the window policy (sair#135).
+	// lock_settings still has the credential type, which the shell can
+	// read: NONE for Swipe or None, else PIN, PATTERN, PASSWORD, ...
+	out, err = s.shell(ctx, serial, "dumpsys lock_settings")
+	if err != nil {
+		return "", fmt.Errorf("dumpsys lock_settings: %w", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "CredentialType:"); ok {
+			return strconv.FormatBool(strings.TrimSpace(v) != "NONE"), nil
+		}
+	}
+	return "", nil
 }
 
 // parseUptime reads /proc/uptime: "<seconds up> <idle seconds>".

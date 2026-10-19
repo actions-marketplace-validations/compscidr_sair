@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -334,12 +335,12 @@ func TestAcquireVerifiesWifiStateEitherWay(t *testing.T) {
 		fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
 		m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
 		var states []dspb.WifiRequest_State
-		m.setWifi = func(_ string, state dspb.WifiRequest_State) error {
+		m.setWifi = func(_ string, state dspb.WifiRequest_State, _ string) error {
 			states = append(states, state)
 			return nil
 		}
 		m.removeReverse = func(string) error { return nil }
-		if _, err := m.Acquire(nil, 0, "", "", 0, wifi, false, "", ""); err != nil {
+		if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, wifi, "", false, "", ""); err != nil {
 			t.Fatal(err)
 		}
 		want := dspb.WifiRequest_OFF
@@ -351,10 +352,10 @@ func TestAcquireVerifiesWifiStateEitherWay(t *testing.T) {
 		}
 		m.CloseScopedPort("L1")
 
-		m.setWifi = func(string, dspb.WifiRequest_State) error {
+		m.setWifi = func(string, dspb.WifiRequest_State, string) error {
 			return status.Error(codes.DeadlineExceeded, "still on Wi-Fi")
 		}
-		if _, err := m.Acquire(nil, 0, "", "", 0, wifi, false, "", ""); status.Code(err) != codes.DeadlineExceeded {
+		if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, wifi, "", false, "", ""); status.Code(err) != codes.DeadlineExceeded {
 			t.Errorf("wifi=%v: err = %v, want DeadlineExceeded", wifi, err)
 		}
 		if fake.lastRelease == nil || fake.lastRelease.LockId != "L1" {
@@ -368,14 +369,14 @@ func TestAcquireVerifiesWifiStateEitherWay(t *testing.T) {
 func TestAcquireFailsWhenPhoneStaysLocked(t *testing.T) {
 	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
 	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
-	m.setWifi = func(string, dspb.WifiRequest_State) error { return nil }
+	m.setWifi = func(string, dspb.WifiRequest_State, string) error { return nil }
 	m.removeReverse = func(string) error { return nil }
 	woke := 0
 	m.wake = func(string) error {
 		woke++
 		return status.Error(codes.FailedPrecondition, "A: screen locked")
 	}
-	if _, err := m.Acquire(nil, 0, "", "", 0, true, false, "", ""); status.Code(err) != codes.FailedPrecondition {
+	if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, true, "", false, "", ""); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("err = %v, want FailedPrecondition", err)
 	}
 	if fake.lastRelease == nil || fake.lastRelease.LockId != "L1" {
@@ -386,40 +387,139 @@ func TestAcquireFailsWhenPhoneStaysLocked(t *testing.T) {
 	}
 }
 
-// Release resets in this order: packages, uptime reboot, Wi-Fi reset, wake
-// (sair#93, sair#92). A reboot is written to the lock log.
+// Release resets in this order: packages, leaked UiAutomation, uptime
+// reboot, Wi-Fi reset, wake (sair#128, sair#93, sair#92), with no Bluetooth
+// cycle after a reboot. The UiAutomation cleanup and the reboot are written
+// to the lock log.
 func TestReleaseRebootsStalePhoneThenResetsAndWakes(t *testing.T) {
 	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
 	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
 	var steps []string
 	m.removeReverse = func(string) error { return nil }
 	m.resetPackages = func(string) ([]string, []string, error) { steps = append(steps, "packages"); return nil, nil, nil }
+	m.clearUiAutomation = func(string) (string, error) {
+		steps = append(steps, "uiautomation")
+		return "killed 2190 app_process", nil
+	}
 	m.rebootIfStale = func(string) (bool, time.Duration, error) {
 		steps = append(steps, "reboot")
 		return true, 30 * time.Hour, nil
 	}
-	m.setWifi = func(_ string, st dspb.WifiRequest_State) error {
+	m.setWifi = func(_ string, st dspb.WifiRequest_State, _ string) error {
 		steps = append(steps, "wifi "+st.String())
 		return nil
 	}
 	m.wake = func(string) error { steps = append(steps, "wake"); return nil }
-	if _, err := m.Acquire(nil, 0, "", "", 0, false, false, "", ""); err != nil {
+	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return nil }
+	if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, false, "", false, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	steps = nil
 	m.Release("L1", "ok")
-	want := []string{"packages", "reboot", "wifi RESET", "wake"}
+	want := []string{"packages", "uiautomation", "reboot", "wifi RESET", "wake", "wifi ON"}
 	if !reflect.DeepEqual(steps, want) {
 		t.Errorf("release steps = %q, want %q", steps, want)
 	}
-	found := false
+	found, uia := false, false
 	for _, e := range fake.lastRelease.GetLog() {
 		if strings.Contains(e.Service, "rebooted after release (uptime 30h0m0s)") {
 			found = true
 		}
+		uia = uia || e.Service == "sair: cleared a leaked UiAutomation registration (killed 2190 app_process)"
+	}
+	if !uia {
+		t.Errorf("lock log has no UiAutomation line: %v", fake.lastRelease.GetLog())
 	}
 	if !found {
 		t.Errorf("lock log has no reboot line: %v", fake.lastRelease.GetLog())
+	}
+}
+
+// The Play Store is disabled for the lease and enabled again as the last
+// release step (sair#151); a phone that refuses says so in the lock log but
+// keeps the lock.
+func TestPlayStoreHeldForTheLease(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	var steps []string
+	m.removeReverse = func(string) error { return nil }
+	m.resetPackages = func(string) ([]string, []string, error) { return nil, nil, nil }
+	m.rebootIfStale = func(string) (bool, time.Duration, error) { return false, time.Hour, nil }
+	m.setWifi = func(_ string, st dspb.WifiRequest_State, _ string) error { steps = append(steps, "wifi "+st.String()); return nil }
+	m.wake = func(string) error { steps = append(steps, "wake"); return nil }
+	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return nil }
+	m.holdUpdates = func(_ string, hold bool) error {
+		steps = append(steps, "hold "+strconv.FormatBool(hold))
+		if hold {
+			return status.Error(codes.FailedPrecondition, "A: pm disable-user com.android.vending: java.lang.SecurityException: Cannot disable system packages.")
+		}
+		return nil
+	}
+	if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, false, "", false, "", ""); err != nil {
+		t.Fatalf("a refused hold cost the lock: %v", err)
+	}
+	if want := []string{"bluetooth", "hold true", "wake", "wifi OFF"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("acquire steps = %q, want %q", steps, want)
+	}
+	steps = nil
+	m.Release("L1", "ok")
+	if want := []string{"wifi RESET", "bluetooth", "wake", "hold false", "wifi ON"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("release steps = %q, want %q", steps, want)
+	}
+	var lines []string
+	for _, e := range fake.lastRelease.GetLog() {
+		if strings.Contains(e.Service, "Play Store") {
+			lines = append(lines, e.Service)
+		}
+	}
+	if want := []string{"sair: Play Store not disabled, an auto-update can stop the app mid-job: A: pm disable-user com.android.vending: java.lang.SecurityException: Cannot disable system packages."}; !reflect.DeepEqual(lines, want) {
+		t.Errorf("lock log Play Store lines = %q, want %q", lines, want)
+	}
+}
+
+// Bluetooth is cycled on release after the Wi-Fi reset (sair#127), and on
+// acquire only when no release reset did it since: the first acquire after
+// a proxy start, not the one after a clean release. A failure is in the
+// lock log but does not cost the lock.
+func TestBluetoothCycledOnReleaseAndOnAcquireOnlyWhenNeeded(t *testing.T) {
+	fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+	var steps []string
+	m.removeReverse = func(string) error { return nil }
+	m.resetPackages = func(string) ([]string, []string, error) { return nil, nil, nil }
+	m.rebootIfStale = func(string) (bool, time.Duration, error) { return false, time.Hour, nil }
+	m.setWifi = func(_ string, st dspb.WifiRequest_State, _ string) error { steps = append(steps, "wifi "+st.String()); return nil }
+	m.wake = func(string) error { steps = append(steps, "wake"); return nil }
+	btErr := status.Error(codes.DeadlineExceeded, "A Bluetooth not back on within 30s: adapter is OFF")
+	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return btErr }
+
+	if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, false, "", false, "", ""); err != nil {
+		t.Fatalf("a Bluetooth failure cost the lock: %v", err)
+	}
+	if want := []string{"bluetooth", "wake", "wifi OFF"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("first acquire steps = %q, want %q", steps, want)
+	}
+	m.resetBluetooth = func(string) error { steps = append(steps, "bluetooth"); return nil }
+	steps = nil
+	m.Release("L1", "ok")
+	if want := []string{"wifi RESET", "bluetooth", "wake", "wifi ON"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("release steps = %q, want %q", steps, want)
+	}
+	var lines []string
+	for _, e := range fake.lastRelease.GetLog() {
+		if strings.Contains(e.Service, "Bluetooth") {
+			lines = append(lines, e.Service)
+		}
+	}
+	if len(lines) != 2 || !strings.Contains(lines[0], "reset failed: A Bluetooth not back on") || !strings.Contains(lines[1], "cycled off and on") {
+		t.Errorf("lock log Bluetooth lines = %q", lines)
+	}
+	steps = nil
+	if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, false, "", false, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"wake", "wifi OFF"}; !reflect.DeepEqual(steps, want) {
+		t.Errorf("acquire after a clean release steps = %q, want %q", steps, want)
 	}
 }
 
@@ -444,6 +544,76 @@ func TestScopedPortReleasesLockWithNoClient(t *testing.T) {
 	waitFor(t, "idle release", func() bool { return f.release() != nil })
 	rel := f.release()
 	if rel.LockId != "lock-1" || rel.Status != "cancelled" || len(rel.Log) == 0 || !strings.Contains(rel.Log[len(rel.Log)-1].Service, "no adb client") {
+		t.Errorf("release = %+v", rel)
+	}
+}
+
+// A radio reset that fails on a wedged radio reboots the phone and runs
+// again (sair#139); the lock log says so. After a Wi-Fi reboot the
+// Bluetooth stack is fresh, so it is not cycled.
+func TestReleaseRebootsAWedgedRadioAndResetsAgain(t *testing.T) {
+	for _, radio := range []string{"wifi", "bluetooth"} {
+		fake := &fakeOrchClient{resp: &pb.AcquireLockResponse{LockId: "L1", Serials: []string{"A"}}}
+		m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "k"}, nil, 3600)
+		var steps []string
+		m.removeReverse = func(string) error { return nil }
+		m.resetPackages = func(string) ([]string, []string, error) { return nil, nil, nil }
+		m.rebootIfStale = func(string) (bool, time.Duration, error) { return false, time.Hour, nil }
+		m.wake = func(string) error { return nil }
+		wedged := true
+		hang := status.Error(codes.DeadlineExceeded, "radio not back")
+		m.setWifi = func(_ string, st dspb.WifiRequest_State, _ string) error {
+			steps = append(steps, "wifi "+st.String())
+			if radio == "wifi" && st == dspb.WifiRequest_RESET && wedged {
+				return hang
+			}
+			return nil
+		}
+		m.resetBluetooth = func(string) error {
+			steps = append(steps, "bluetooth")
+			if radio == "bluetooth" && wedged {
+				return hang
+			}
+			return nil
+		}
+		m.rebootIfWedged = func(_, r string) (bool, error) {
+			steps = append(steps, "unwedge "+r)
+			wedged = false
+			return true, nil
+		}
+		if _, err := m.Acquire(context.Background(), nil, 0, nil, 0, false, "", false, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		steps, wedged = nil, true
+		m.Release("L1", "ok")
+		want := map[string][]string{
+			"wifi":      {"wifi RESET", "unwedge wifi", "wifi RESET", "wifi ON"},
+			"bluetooth": {"wifi RESET", "bluetooth", "unwedge bluetooth", "bluetooth", "wifi ON"},
+		}[radio]
+		if !reflect.DeepEqual(steps, want) {
+			t.Errorf("%s: release steps = %q, want %q", radio, steps, want)
+		}
+		found := false
+		for _, e := range fake.lastRelease.GetLog() {
+			found = found || e.Service == "sair: radio wedged ("+radio+"), rebooted"
+		}
+		if !found {
+			t.Errorf("%s: lock log has no wedged line: %v", radio, fake.lastRelease.GetLog())
+		}
+	}
+}
+
+// A proxy shutting down releases its locks as "proxy_restart" (sair#137), so
+// the lock list tells it apart from a cancelled job.
+func TestShutdownAllReleasesAsProxyRestart(t *testing.T) {
+	f := newFakeSessionServer()
+	m, _ := newManagerOnSession(t, f, 1)
+	if _, err := m.CreateScopedPort("lock-1", map[string]struct{}{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	m.ShutdownAll()
+	waitFor(t, "shutdown release", func() bool { return f.release() != nil })
+	if rel := f.release(); rel.LockId != "lock-1" || rel.Status != "proxy_restart" {
 		t.Errorf("release = %+v", rel)
 	}
 }

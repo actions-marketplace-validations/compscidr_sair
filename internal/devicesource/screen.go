@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -132,7 +133,7 @@ func dumpsysField(out, prefix string) string {
 func (s *Server) warning(serial string) string {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	return s.warnings[serial]
+	return strings.Join(slices.DeleteFunc([]string{s.warnings[serial], s.btWarnings[serial]}, func(w string) bool { return w == "" }), "; ")
 }
 
 // lastReboot is when RebootIfStale last rebooted the device, zero if never.

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -100,17 +101,28 @@ type ScopedPortManager struct {
 	flushInterval time.Duration
 	scopedPorts   map[string]*ScopedPort
 	// setWifi is commandRouter.SetWifi; tests swap it.
-	setWifi func(serial string, state dspb.WifiRequest_State) error
+	setWifi func(serial string, state dspb.WifiRequest_State, band string) error
 	// removeReverse is commandRouter.RemoveReverseForwards; tests swap it.
 	removeReverse func(serial string) error
 	// addReverse is commandRouter.AddReverseForward; tests swap it.
 	addReverse func(serial string, port int) error
 	// resetPackages is commandRouter.ResetPackages; tests swap it.
 	resetPackages func(serial string) (removed, suggestions []string, err error)
+	// clearUiAutomation is commandRouter.ClearUiAutomation; tests swap it.
+	clearUiAutomation func(serial string) (string, error)
 	// wake is commandRouter.Wake; tests swap it.
 	wake func(serial string) error
+	// resetBluetooth is commandRouter.ResetBluetooth; tests swap it.
+	resetBluetooth func(serial string) error
+	// holdUpdates is commandRouter.HoldUpdates; tests swap it.
+	holdUpdates func(serial string, hold bool) error
+	// btFresh holds the serials whose release reset left Bluetooth freshly
+	// cycled (or rebooted), so the next acquire need not cycle it again.
+	btFresh sync.Map
 	// rebootIfStale is commandRouter.RebootIfStale; tests swap it.
 	rebootIfStale func(serial string) (rebooted bool, uptime time.Duration, err error)
+	// rebootIfWedged is commandRouter.RebootIfWedged; tests swap it.
+	rebootIfWedged func(serial, radio string) (rebooted bool, err error)
 	// event is commandRouter.Event; tests swap it.
 	event func(e *pb.BenchEvent)
 	// recentSourceLog is commandRouter.RecentDeviceSourceLog; tests swap it.
@@ -156,8 +168,12 @@ func NewScopedPortManager(
 		removeReverse:         commandRouter.RemoveReverseForwards,
 		addReverse:            commandRouter.AddReverseForward,
 		resetPackages:         commandRouter.ResetPackages,
+		clearUiAutomation:     commandRouter.ClearUiAutomation,
 		wake:                  commandRouter.Wake,
+		resetBluetooth:        commandRouter.ResetBluetooth,
+		holdUpdates:           commandRouter.HoldUpdates,
 		rebootIfStale:         commandRouter.RebootIfStale,
+		rebootIfWedged:        commandRouter.RebootIfWedged,
 		event:                 commandRouter.Event,
 		recentSourceLog:       commandRouter.RecentDeviceSourceLog,
 	}
@@ -179,16 +195,18 @@ func NewScopedPortManager(
 // before Acquire returns; without it, every local device is verified offline
 // first rather than trusting the previous release's reset (sair#86). Either
 // way a device that cannot be put in that state releases the lock and
-// returns the error. A bench without managed Wi-Fi skips this.
+// returns the error. A bench without managed Wi-Fi skips this. wifiBand
+// (with wifi) is SetWifi's band.
 //
 // Every local device is also awake with its keyguard dismissed, verified
 // (sair#92); one that stays locked costs the lock the same way.
 //
 // With sameProxy, the orchestrator grants every device from a single proxy.
-// clientIP is the runner's address as this proxy sees it; see AcquireLock.
-func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count int32, repo, runURL string, priority int32, wifi, sameProxy bool, tenantKey, clientIP string) (*ScopedPort, error) {
+// clientIP is the runner's address as this proxy sees it; ctx ends the wait
+// when the runner gives up; see AcquireLock.
+func (m *ScopedPortManager) Acquire(ctx context.Context, requestedSerials map[string]struct{}, count int32, job *pb.AcquireLockRequest, priority int32, wifi bool, wifiBand string, sameProxy bool, tenantKey, clientIP string) (*ScopedPort, error) {
 	asked := time.Now()
-	result, err := m.commandRouter.AcquireLock(requestedSerials, count, 30, repo, runURL, priority, sameProxy, tenantKey, clientIP)
+	result, err := m.commandRouter.AcquireLock(ctx, requestedSerials, count, 30, job, priority, sameProxy, tenantKey, clientIP)
 	if err != nil {
 		return nil, err
 	}
@@ -213,6 +231,10 @@ func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count 
 		mu := m.wifiLock(serial)
 		mu.Lock()
 		m.cleanDevice(sp, serial, " (left by an earlier job)")
+		if _, fresh := m.btFresh.LoadAndDelete(serial); !fresh {
+			m.cycleBluetooth(sp, serial, " (no release reset since the last job)")
+		}
+		m.setUpdates(sp, serial, true)
 		err := m.wakeDevice(sp.LockID, serial)
 		mu.Unlock()
 		if wakeFailed(err) {
@@ -221,7 +243,7 @@ func (m *ScopedPortManager) Acquire(requestedSerials map[string]struct{}, count 
 		}
 	}
 	m.setupDeviceAPI(sp)
-	if err := m.SetWifi(sp.LockID, nil, wifi); err != nil && !wifiUnmanaged(err) {
+	if err := m.SetWifi(sp.LockID, nil, wifi, wifiBand); err != nil && !wifiUnmanaged(err) {
 		m.acquireFailed(sp, "wifi_failed", err, asked, granted)
 		return nil, err
 	}
@@ -320,9 +342,9 @@ var wifiEventKinds = map[dspb.WifiRequest_State]pb.BenchEventKind{
 }
 
 // wifiDevice is setWifi plus its WIFI_* event, on a bench that manages Wi-Fi.
-func (m *ScopedPortManager) wifiDevice(lockID, serial string, state dspb.WifiRequest_State) error {
+func (m *ScopedPortManager) wifiDevice(lockID, serial string, state dspb.WifiRequest_State, band string) error {
 	start := time.Now()
-	err := m.setWifi(serial, state)
+	err := m.setWifi(serial, state, band)
 	if !wifiUnmanaged(err) {
 		m.event(&pb.BenchEvent{
 			Kind: wifiEventKinds[state], Serial: serial, LockId: lockID, Outcome: wifiOutcome(err), Detail: errText(err),
@@ -399,10 +421,28 @@ var (
 	errNotInLock   = errors.New("serial is not part of this lock")
 )
 
+// AddLabels forwards labels for a lock this proxy holds; a per-serial label
+// must name one of the lock's devices.
+func (m *ScopedPortManager) AddLabels(lockID string, labels []*pb.Label) error {
+	m.mu.Lock()
+	sp := m.scopedPorts[lockID]
+	m.mu.Unlock()
+	if sp == nil {
+		return errUnknownLock
+	}
+	for _, l := range labels {
+		if _, ok := sp.Serials[l.Serial]; l.Serial != "" && !ok {
+			return fmt.Errorf("%w: %s", errNotInLock, l.Serial)
+		}
+	}
+	return m.commandRouter.AddLockLabels(lockID, labels)
+}
+
 // SetWifi turns Wi-Fi on or off for serials of a lock, or for all of its
 // local devices when serials is empty. Devices relayed from another proxy are
-// not supported: naming one is an error, and "all" skips them.
-func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) error {
+// not supported: naming one is an error, and "all" skips them. band ("2.4",
+// "5", "6", or "" for any) pins the GHz band a phone joins on (sair#143).
+func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool, band string) error {
 	m.mu.Lock()
 	sp := m.scopedPorts[lockID]
 	m.mu.Unlock()
@@ -434,7 +474,7 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 			mu := m.wifiLock(s)
 			mu.Lock()
 			defer mu.Unlock()
-			errs[i] = m.wifiDevice(lockID, s, state)
+			errs[i] = m.wifiDevice(lockID, s, state, band)
 		})
 	}
 	wg.Wait()
@@ -448,7 +488,8 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool) er
 
 // resetDevices returns a closed port's devices to baseline: no reverse
 // forwards, the job's packages gone, rebooted if its uptime is over the
-// bench's limit, Wi-Fi reset, awake and unlocked. A device a newer lock
+// bench's limit, Wi-Fi reset, Bluetooth cycled, awake and unlocked, Play Store
+// enabled again. A device a newer lock
 // already holds is skipped: its job owns the state now.
 func (m *ScopedPortManager) resetDevices(sp *ScopedPort) {
 	for serial := range sp.Serials {
@@ -494,8 +535,20 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 		m.event(reboot)
 		failed = true
 	}
-	if err := m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET); err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound {
+	err = m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET, "")
+	resetFailed := func() bool { return err != nil && !wifiUnmanaged(err) && status.Code(err) != codes.NotFound }
+	if resetFailed() && m.unwedge(sp, serial, "wifi", "") {
+		rebooted = true
+		err = m.wifiDevice(lockID, serial, dspb.WifiRequest_RESET, "")
+	}
+	if resetFailed() {
 		slog.Warn("Wi-Fi reset failed", "serial", serial, "lockId", lockID, "error", err)
+		failed = true
+	}
+	// A fresh boot has a fresh Bluetooth stack.
+	if rebooted || !m.cycleBluetooth(sp, serial, "") {
+		m.btFresh.Store(serial, true)
+	} else {
 		failed = true
 	}
 	// Awake and unlocked for the next tenant (sair#92). The next acquire
@@ -504,8 +557,39 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 		slog.Warn("wake after release failed; the next acquire of this phone will fail until it is fixed", "serial", serial, "lockId", lockID, "error", err)
 		failed = true
 	}
+	m.setUpdates(sp, serial, false)
+	// Back online between leases, or the Play Store is only ever on while
+	// the phone has no network and nothing updates (sair#151). The reset
+	// above already dropped the job's networks; the next acquire turns this
+	// one off again for --no-wifi.
+	if err == nil {
+		if err := m.wifiDevice(lockID, serial, dspb.WifiRequest_ON, ""); err != nil {
+			slog.Warn("rejoining the bench Wi-Fi after release failed; the phone stays offline until its next lease", "serial", serial, "lockId", lockID, "error", err)
+		}
+	}
 	if failed {
 		m.logExcerpt(sp, []string{serial})
+	}
+}
+
+// setUpdates holds (on acquire) or resumes (on release) a phone's Play
+// Store auto-updates (sair#151) and says so in sp's lock log. A failure
+// costs nothing but the line: the job may still get through. A relayed
+// device, a phone without the Play Store and an older device source are
+// skipped. The caller holds the serial's lock.
+func (m *ScopedPortManager) setUpdates(sp *ScopedPort, serial string, hold bool) {
+	err := m.holdUpdates(serial, hold)
+	switch c := status.Code(err); {
+	case c == codes.NotFound, c == codes.Unimplemented:
+	case err == nil && hold:
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Play Store disabled for the lease (auto-updates resume on release)"})
+	case err == nil:
+	case hold:
+		slog.Warn("could not disable the Play Store; an auto-update can kill the app under test", "serial", serial, "lockId", sp.LockID, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Play Store not disabled, an auto-update can stop the app mid-job: " + errText(err)})
+	default:
+		slog.Warn("could not re-enable the Play Store; the phone gets no app updates until it is", "serial", serial, "lockId", sp.LockID, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Play Store not re-enabled: " + errText(err)})
 	}
 }
 
@@ -526,11 +610,11 @@ func (m *ScopedPortManager) waitForSource(serial string) {
 	slog.Warn("rebooted phone is not back in the device list yet", "serial", serial)
 }
 
-// cleanDevice removes a phone's reverse forwards and the packages a job
-// installed, recording what went in sp's lock log with note appended. The
-// caller holds the serial's lock. Runs on release and again on acquire, so
-// a job that never released is cleaned up by the next one. Returns whether
-// the package reset failed.
+// cleanDevice removes a phone's reverse forwards, the packages a job
+// installed and a UiAutomation registration it leaked, recording what went
+// in sp's lock log with note appended. The caller holds the serial's lock.
+// Runs on release and again on acquire, so a job that never released is
+// cleaned up by the next one. Returns whether a reset step failed.
 func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) (failed bool) {
 	if err := m.removeReverse(serial); err != nil && status.Code(err) != codes.NotFound {
 		slog.Warn("removing reverse forwards failed", "serial", serial, "lockId", sp.LockID, "error", err)
@@ -549,7 +633,72 @@ func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) (fa
 		slog.Warn("package reset failed; a job's APKs may stay on the phone", "serial", serial, "lockId", sp.LockID, "error", err)
 		event.Outcome, event.Detail = "failed", errText(err)
 		m.event(event)
+		failed = true
+	}
+	// A leaked UiAutomation fails every later instrumentation (sair#128).
+	start := time.Now()
+	cleared, err := m.clearUiAutomation(serial)
+	switch c := status.Code(err); {
+	case err == nil && cleared != "":
+		slog.Info("cleared a leaked UiAutomation registration", "serial", serial, "lockId", sp.LockID, "how", cleared)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: cleared a leaked UiAutomation registration (" + cleared + ")" + note})
+		if cleared == "rebooted" {
+			m.waitForSource(serial)
+			m.event(&pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_REBOOT, Serial: serial, LockId: sp.LockID, Outcome: "ok", Detail: "leaked UiAutomation", DurationMs: time.Since(start).Milliseconds()})
+		}
+	case err == nil, c == codes.NotFound, c == codes.Unimplemented:
+	default:
+		slog.Warn("clearing a leaked UiAutomation failed; instrumentation on this phone will fail until it reboots", "serial", serial, "lockId", sp.LockID, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: leaked UiAutomation registration not cleared: " + errText(err) + note})
+		failed = true
+	}
+	return failed
+}
+
+// cycleBluetooth turns a phone's Bluetooth off and back on (sair#127) and
+// says so in sp's lock log with note appended. A failure is logged, and is
+// the device's warning on the device source, but does not cost the lock:
+// most jobs never touch Bluetooth. A relayed device, a phone without the
+// adapter dump and an older device source are skipped. The caller holds
+// the serial's lock. Returns whether it failed.
+func (m *ScopedPortManager) cycleBluetooth(sp *ScopedPort, serial, note string) (failed bool) {
+	start := time.Now()
+	err := m.resetBluetooth(serial)
+	if c := status.Code(err); err != nil && c != codes.NotFound && c != codes.Unimplemented && m.unwedge(sp, serial, "bluetooth", note) {
+		start = time.Now()
+		err = m.resetBluetooth(serial)
+	}
+	switch c := status.Code(err); {
+	case err == nil:
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: fmt.Sprintf("sair: Bluetooth cycled off and on (%s)%s", time.Since(start).Round(100*time.Millisecond), note)})
+	case c == codes.NotFound, c == codes.Unimplemented:
+	default:
+		slog.Warn("Bluetooth reset failed; the phone may have Bluetooth off", "serial", serial, "lockId", sp.LockID, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Bluetooth reset failed: " + errText(err) + note})
 		return true
+	}
+	return false
+}
+
+// unwedge (sair#139) has the device source reboot a phone whose radio
+// reset just failed if the radio's service no longer answers, records that
+// in sp's lock log with note appended, and returns whether it rebooted, so
+// the caller re-runs the reset. The caller holds the serial's lock, so the
+// next acquire waits for the boot.
+func (m *ScopedPortManager) unwedge(sp *ScopedPort, serial, radio, note string) bool {
+	start := time.Now()
+	rebooted, err := m.rebootIfWedged(serial, radio)
+	switch c := status.Code(err); {
+	case err == nil && rebooted:
+		slog.Warn("radio wedged; rebooted", "serial", serial, "lockId", sp.LockID, "radio", radio)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: radio wedged (" + radio + "), rebooted" + note})
+		m.waitForSource(serial)
+		m.event(&pb.BenchEvent{Kind: pb.BenchEventKind_BENCH_EVENT_KIND_REBOOT, Serial: serial, LockId: sp.LockID, Outcome: "ok", Detail: "wedged " + radio, DurationMs: time.Since(start).Milliseconds()})
+		return true
+	case err == nil, c == codes.NotFound, c == codes.Unimplemented:
+	default:
+		slog.Warn("radio wedged; not rebooted", "serial", serial, "lockId", sp.LockID, "radio", radio, "error", err)
+		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: radio wedged (" + radio + "), not rebooted: " + errText(err) + note})
 	}
 	return false
 }
@@ -686,7 +835,9 @@ func (m *ScopedPortManager) GetAllScopedPorts() []*ScopedPort {
 	return ports
 }
 
-// ShutdownAll closes all scoped ports and releases all locks.
+// ShutdownAll closes all scoped ports and releases all locks, as
+// "proxy_restart" so the account's lock list (sair-locks) can tell a proxy
+// going away from a job that cancelled.
 func (m *ScopedPortManager) ShutdownAll() {
 	m.mu.Lock()
 	ports := make([]*ScopedPort, 0, len(m.scopedPorts))
@@ -698,7 +849,7 @@ func (m *ScopedPortManager) ShutdownAll() {
 	for _, sp := range ports {
 		m.CloseScopedPort(sp.LockID) // stops the heartbeat before we drain
 		entries := sp.Log.DrainAll()
-		if _, err := m.commandRouter.ReleaseLock(sp.LockID, "cancelled", entries); err != nil {
+		if _, err := m.commandRouter.ReleaseLock(sp.LockID, "proxy_restart", entries); err != nil {
 			slog.Warn("failed to release lock during shutdown", "lockId", sp.LockID, "error", err)
 		}
 	}

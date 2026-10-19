@@ -36,11 +36,12 @@ type HTTPApi struct {
 	server    *http.Server
 
 	// checkKey asks the orchestrator whether a key is on the owner's account
-	// (sair#120); commandRouter.CheckKey, tests swap it. Answers are cached
+	// (sair#120) or a guest key's account (sair#131); commandRouter.CheckKey,
+	// tests swap it. Answers are cached
 	// for keyCacheTTL, misses included, so a bad key is not a round trip per
 	// request. An error (orchestrator down, or one that predates the RPC) is
 	// a refusal and is not cached.
-	checkKey   func(key string) (bool, error)
+	checkKey   func(key string, guestKeys []string) (bool, error)
 	keyCacheMu sync.Mutex
 	keyCache   map[string]keyAnswer
 }
@@ -69,6 +70,7 @@ func NewHTTPApi(scopedPortManager *ScopedPortManager, deviceListTracker *DeviceL
 	mux.HandleFunc("POST /acquire", api.handleAcquire)
 	mux.HandleFunc("POST /release", api.handleRelease)
 	mux.HandleFunc("POST /wifi", api.handleWifi)
+	mux.HandleFunc("POST /label", api.handleLabel)
 	mux.HandleFunc("GET /status", api.handleStatus)
 	mux.HandleFunc("POST /internal/devices", api.handleRegisterDevices)
 
@@ -105,7 +107,8 @@ func (a *HTTPApi) Stop() {
 }
 
 // requireAuth accepts the owner key, any listed guest key, and any other key
-// the orchestrator says is on the owner's account; anything else is refused.
+// the orchestrator says is on the owner's account or a listed guest's
+// account; anything else is refused.
 func (a *HTTPApi) requireAuth(r *http.Request) bool {
 	key := r.Header.Get("x-api-key")
 	if key == a.apiKey || slices.Contains(a.guestKeys, key) {
@@ -123,7 +126,7 @@ func (a *HTTPApi) requireAuth(r *http.Request) bool {
 	}
 	// ponytail: the lock is held across the round trip, so concurrent
 	// requests with unlisted keys serialize behind it; fine at CI rates.
-	ok, err := a.checkKey(key)
+	ok, err := a.checkKey(key, a.guestKeys)
 	if err != nil {
 		slog.Warn("could not check api key with the orchestrator", "error", err)
 		return false
@@ -139,8 +142,9 @@ func (a *HTTPApi) requireAuth(r *http.Request) bool {
 
 // tenantKey is the key to attribute a lock to: empty for the owner (the
 // orchestrator session already is the owner), the caller's key otherwise. A
-// guest's key puts the lock under the guest's account; another key on the
-// owner's account resolves to the owner, so it is attributed the same way.
+// guest's key (listed, or another on a guest's account) puts the lock under
+// the guest's account; another key on the owner's account resolves to the
+// owner, so it is attributed the same way.
 func (a *HTTPApi) tenantKey(r *http.Request) string {
 	if key := r.Header.Get("x-api-key"); key != a.apiKey {
 		return key
@@ -213,6 +217,13 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// wifi_band=2.4|5|6 joins each phone on that GHz band of the bench Wi-Fi.
+	wifiBand := r.URL.Query().Get("wifi_band")
+	if !validWifiBand(wifiBand) || (wifiBand != "" && !wifi) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "wifi_band parameter must be 2.4, 5 or 6, with wifi on"})
+		return
+	}
+
 	// same_proxy=true takes every device from one proxy, for phones that must
 	// sit together; the orchestrator does the picking.
 	sameProxy := false
@@ -225,13 +236,38 @@ func (a *HTTPApi) handleAcquire(w http.ResponseWriter, r *http.Request) {
 		sameProxy = parsed
 	}
 
-	repo := r.URL.Query().Get("repo")
-	runURL := r.URL.Query().Get("run_url")
-	sp, err := a.scopedPortManager.Acquire(requestedSerials, int32(count), repo, runURL, int32(priority), wifi, sameProxy, a.tenantKey(r), clientIP(r))
+	q := r.URL.Query()
+	var runAttempt int64
+	if v := q.Get("run_attempt"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 32)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "run_attempt parameter must be a 32-bit integer"})
+			return
+		}
+		runAttempt = parsed
+	}
+	labels, err := parseLabels(q["label"])
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	job := &pb.AcquireLockRequest{
+		Repo: q.Get("repo"), RunUrl: q.Get("run_url"), Job: q.Get("job"), RunAttempt: int32(runAttempt),
+		Sha: q.Get("sha"), Branch: q.Get("branch"), Workflow: q.Get("workflow"), Stage: q.Get("stage"), Labels: labels,
+	}
+	sp, err := a.scopedPortManager.Acquire(r.Context(), requestedSerials, int32(count), job, int32(priority), wifi, wifiBand, sameProxy, a.tenantKey(r), clientIP(r))
 	if err != nil {
 		code, msg := httpStatusForAcquireError(err)
 		slog.Error("failed to acquire", "error", err, "status", code, "message", msg)
 		writeJSON(w, code, map[string]string{"error": msg})
+		return
+	}
+	// The runner hung up after the grant (or during the device setup after
+	// it): nobody will use this port, so free the devices now rather than at
+	// the idle timeout (sair#133).
+	if r.Context().Err() != nil {
+		slog.Warn("client left before the lock was handed over; releasing", "lockId", sp.LockID)
+		a.scopedPortManager.Release(sp.LockID, "cancelled")
 		return
 	}
 
@@ -295,6 +331,79 @@ func (a *HTTPApi) handleRelease(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Label caps, per request. The orchestrator stores what it is sent, so the
+// proxy keeps a runaway client from filling a job record.
+const (
+	maxLabels        = 32
+	maxLabelKeyLen   = 64
+	maxLabelValueLen = 256
+)
+
+// parseLabels reads label parameters: "k=v" for the lock, or "SERIAL:k=v"
+// for one of its devices. The serial is split off at the last ':' before the
+// '=', since TCP serials (host:port) have one; keys cannot.
+func parseLabels(params []string) ([]*pb.Label, error) {
+	if len(params) > maxLabels {
+		return nil, fmt.Errorf("at most %d labels per request", maxLabels)
+	}
+	labels := make([]*pb.Label, 0, len(params))
+	for _, p := range params {
+		left, value, ok := strings.Cut(p, "=")
+		if !ok {
+			return nil, fmt.Errorf("label %q must be k=v or SERIAL:k=v", p)
+		}
+		var serial string
+		key := left
+		if i := strings.LastIndex(left, ":"); i >= 0 {
+			serial, key = left[:i], left[i+1:]
+		}
+		if key == "" || (serial == "" && strings.Contains(left, ":")) {
+			return nil, fmt.Errorf("label %q must be k=v or SERIAL:k=v", p)
+		}
+		if len(key) > maxLabelKeyLen || len(value) > maxLabelValueLen {
+			return nil, fmt.Errorf("label %q: key is at most %d bytes, value at most %d", p, maxLabelKeyLen, maxLabelValueLen)
+		}
+		labels = append(labels, &pb.Label{Serial: serial, Key: key, Value: value})
+	}
+	return labels, nil
+}
+
+// handleLabel adds labels to a held lock, for roles a client only knows once
+// it has the serials (sair#141).
+func (a *HTTPApi) handleLabel(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAuth(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing x-api-key header"})
+		return
+	}
+	lockID := r.URL.Query().Get("lock_id")
+	if lockID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lock_id parameter required"})
+		return
+	}
+	labels, err := parseLabels(r.URL.Query()["label"])
+	if err == nil && len(labels) == 0 {
+		err = errors.New("label parameter required")
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	err = a.scopedPortManager.AddLabels(lockID, labels)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	case errors.Is(err, errUnknownLock):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+	case errors.Is(err, errNotInLock):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+	default:
+		code, msg := httpStatusForAcquireError(err)
+		slog.Error("adding labels failed", "lockId", lockID, "error", err)
+		writeJSON(w, code, map[string]string{"error": msg})
+	}
+}
+
 // parseWifiState reads an on/off parameter; empty means def.
 func parseWifiState(v string, def bool) (on, ok bool) {
 	switch v {
@@ -306,6 +415,12 @@ func parseWifiState(v string, def bool) (on, ok bool) {
 		return false, true
 	}
 	return false, false
+}
+
+// validWifiBand reports whether v is a WifiRequest.band the device source
+// takes; "" is any band.
+func validWifiBand(v string) bool {
+	return v == "" || v == "2.4" || v == "5" || v == "6"
 }
 
 // handleWifi turns Wi-Fi on or off on a lock's devices mid-job, using the
@@ -336,6 +451,11 @@ func (a *HTTPApi) handleWifi(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "state parameter must be on or off"})
 		return
 	}
+	band := q.Get("band")
+	if !validWifiBand(band) || (band != "" && !on) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "band parameter must be 2.4, 5 or 6, with state on"})
+		return
+	}
 	var serials []string
 	for _, s := range strings.Split(q.Get("serial"), ",") {
 		if s = strings.TrimSpace(s); s != "" {
@@ -343,7 +463,7 @@ func (a *HTTPApi) handleWifi(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err := a.scopedPortManager.SetWifi(lockID, serials, on)
+	err := a.scopedPortManager.SetWifi(lockID, serials, on, band)
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

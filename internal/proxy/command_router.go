@@ -231,8 +231,9 @@ func (r *CommandRouter) ForwardToDevice(sourceAddr, serial, command string, conn
 }
 
 // SetWifi sets a device's Wi-Fi through the device source it is attached to.
-// NotFound for a device this proxy has no source for (e.g. a relayed one).
-func (r *CommandRouter) SetWifi(serial string, state dspb.WifiRequest_State) error {
+// band is WifiRequest.band. NotFound for a device this proxy has no source
+// for (e.g. a relayed one).
+func (r *CommandRouter) SetWifi(serial string, state dspb.WifiRequest_State, band string) error {
 	addr := ""
 	if r.ResolveSource != nil {
 		addr = r.ResolveSource(serial)
@@ -248,7 +249,7 @@ func (r *CommandRouter) SetWifi(serial string, state dspb.WifiRequest_State) err
 	// guards against a source that never answers.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	_, err = client.SetWifi(ctx, &dspb.WifiRequest{Serial: serial, State: state})
+	_, err = client.SetWifi(ctx, &dspb.WifiRequest{Serial: serial, State: state, Band: band})
 	return err
 }
 
@@ -328,6 +329,48 @@ func (r *CommandRouter) Wake(serial string) error {
 	return err
 }
 
+// ResetBluetooth cycles a local device's Bluetooth through its device
+// source (sair#127). NotFound for a device this proxy has no source for.
+func (r *CommandRouter) ResetBluetooth(serial string) error {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return err
+	}
+	// Two 30s waits on the device source; this guards against one that never answers.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	_, err = client.ResetBluetooth(ctx, &dspb.ResetBluetoothRequest{Serial: serial})
+	return err
+}
+
+// HoldUpdates disables (hold) or re-enables a local device's Play Store
+// through its device source (sair#151). NotFound for a device this proxy
+// has no source for.
+func (r *CommandRouter) HoldUpdates(serial string, hold bool) error {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, err = client.HoldUpdates(ctx, &dspb.HoldUpdatesRequest{Serial: serial, Hold: hold})
+	return err
+}
+
 // RecentDeviceSourceLog returns the device source's recent log lines about
 // a local device, for a failure's lock log excerpt.
 func (r *CommandRouter) RecentDeviceSourceLog(serial string) ([]string, error) {
@@ -373,6 +416,56 @@ func (r *CommandRouter) RebootIfStale(serial string) (rebooted bool, uptime time
 		return false, 0, err
 	}
 	return resp.Rebooted, time.Duration(resp.UptimeSeconds) * time.Second, nil
+}
+
+// RebootIfWedged reboots a local device whose radio ("wifi" or "bluetooth")
+// reset just failed if that radio's service no longer answers, and returns
+// once it is back (sair#139). NotFound for a device this proxy has no source
+// for; Unimplemented from an older device source.
+func (r *CommandRouter) RebootIfWedged(serial, radio string) (rebooted bool, err error) {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return false, status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	resp, err := client.RebootIfWedged(ctx, &dspb.WedgedRadioRequest{Serial: serial, Radio: radio})
+	if err != nil {
+		return false, err
+	}
+	return resp.Rebooted, nil
+}
+
+// ClearUiAutomation clears a UiAutomation registration a dead session leaked
+// on a local device (sair#128) and says how: "" when there was none, "killed
+// ..." or "rebooted". NotFound for a device this proxy has no source for;
+// Unimplemented from an older device source.
+func (r *CommandRouter) ClearUiAutomation(serial string) (string, error) {
+	addr := ""
+	if r.ResolveSource != nil {
+		addr = r.ResolveSource(serial)
+	}
+	if addr == "" {
+		return "", status.Errorf(codes.NotFound, "device %s is not attached to this proxy", serial)
+	}
+	client, err := r.getOrCreateDSClient(addr)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	resp, err := client.ClearUiAutomation(ctx, &dspb.UiAutomationRequest{Serial: serial})
+	if err != nil {
+		return "", err
+	}
+	return resp.Cleared, nil
 }
 
 // RemoveReverseForwards runs `adb reverse --remove-all` on a local device, so
@@ -450,8 +543,13 @@ var (
 // is a guest key the lock is attributed to; empty means the owner's own lock.
 // clientIP, when set, is the caller's address as the proxy sees it; the
 // orchestrator records it as where the key was last used from
-// (sair-orchestrator#705). Older orchestrators ignore it.
-func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, deadlineMinutes int64, repo, runURL string, priority int32, sameProxy bool, tenantKey, clientIP string) (*LockResult, error) {
+// (sair-orchestrator#705). Older orchestrators ignore it. job carries what
+// the lock is for (repo, run URL, CI job, labels) and may be nil; its other
+// fields are ignored.
+//
+// Cancelling ctx (the runner hung up while queued) cancels the call, and the
+// orchestrator drops the waiter instead of granting it a lock (sair#133).
+func (r *CommandRouter) AcquireLock(parent context.Context, serials map[string]struct{}, count int32, deadlineMinutes int64, job *pb.AcquireLockRequest, priority int32, sameProxy bool, tenantKey, clientIP string) (*LockResult, error) {
 	if count < 0 {
 		return nil, fmt.Errorf("count must not be negative: %d", count)
 	}
@@ -461,13 +559,17 @@ func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, de
 	if deadlineMinutes <= 0 {
 		deadlineMinutes = 30
 	}
-	ctx, cancel := r.ctxWithTimeout(time.Duration(deadlineMinutes) * time.Minute)
+	ctx, cancel := context.WithTimeout(metadata.NewOutgoingContext(parent, metadata.Pairs("x-api-key", r.apiKey)), time.Duration(deadlineMinutes)*time.Minute)
 	defer cancel()
 	if clientIP != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-client-ip", clientIP)
 	}
 
-	req := &pb.AcquireLockRequest{Repo: repo, Count: count, RunUrl: runURL, ProxyId: r.proxyID, Priority: priority, SameProxy: sameProxy, TenantApiKey: tenantKey}
+	req := &pb.AcquireLockRequest{
+		Repo: job.GetRepo(), RunUrl: job.GetRunUrl(), Job: job.GetJob(), RunAttempt: job.GetRunAttempt(),
+		Sha: job.GetSha(), Branch: job.GetBranch(), Workflow: job.GetWorkflow(), Stage: job.GetStage(), Labels: job.GetLabels(),
+		Count: count, ProxyId: r.proxyID, Priority: priority, SameProxy: sameProxy, TenantApiKey: tenantKey,
+	}
 	for s := range serials {
 		req.Serials = append(req.Serials, s)
 	}
@@ -510,16 +612,26 @@ func (r *CommandRouter) AcquireLock(serials map[string]struct{}, count int32, de
 }
 
 // CheckKey asks the orchestrator whether key belongs to this proxy's own
-// account (sair#120). Unimplemented from an orchestrator that predates it
-// is returned as is, so the caller can fall back to its local lists.
-func (r *CommandRouter) CheckKey(key string) (bool, error) {
+// account (sair#120) or to the account of one of guestKeys (sair#131).
+// Unimplemented from an orchestrator that predates it is returned as is, so
+// the caller can fall back to its local lists.
+func (r *CommandRouter) CheckKey(key string, guestKeys []string) (bool, error) {
 	ctx, cancel := r.ctxWithTimeout(10 * time.Second)
 	defer cancel()
-	resp, err := r.orchClient.CheckKey(ctx, &pb.CheckKeyRequest{ApiKey: key})
+	resp, err := r.orchClient.CheckKey(ctx, &pb.CheckKeyRequest{ApiKey: key, GuestApiKeys: guestKeys})
 	if err != nil {
 		return false, err
 	}
 	return resp.SameTenant, nil
+}
+
+// AddLockLabels labels a held lock or its devices. Unimplemented from an
+// orchestrator that predates it is returned as is.
+func (r *CommandRouter) AddLockLabels(lockID string, labels []*pb.Label) error {
+	ctx, cancel := r.ctxWithTimeout(10 * time.Second)
+	defer cancel()
+	_, err := r.orchClient.AddLockLabels(ctx, &pb.AddLockLabelsRequest{LockId: lockID, Labels: labels})
+	return err
 }
 
 // ReleaseLock releases a lock, reporting the job outcome so the orchestrator

@@ -105,3 +105,61 @@ func TestRebootIfStaleLeavesASecureLockedPhoneUp(t *testing.T) {
 		}
 	}
 }
+
+// Android 17 (Pixel 7, sair#135) has no secure= in the window policy, only
+// simSecure=; dumpsys lock_settings still says whether a credential is set.
+const (
+	policyAndroid17 = "WINDOW MANAGER POLICY STATE (dumpsys window policy)\n    mKeyguardOccluded=false mPendingKeyguardOccluded=false\n    KeyguardServiceDelegate\n      showing=false\n      inputRestricted=false\n      occluded=false\n      trusted=false\n      simSecure=false\n      dreaming=false\n      systemReady=true\n      deviceHasKeyguard=true\n      enabled=true\n      userId=0\n      bootCompleted=true\n"
+	lockSettings    = "Current lock settings service state:\n\nUser State:\n  User 0\n    LSKF-based SP protector ID: 0c48689f69bfe652\n    SID: 0000000000000000\n    Quality: 0\n    CredentialType: %s\n    IsLockScreenDisabled: false\n    IsUseOneLockSettingEnabled: true\n    Metrics: known\n"
+)
+
+func TestSecureLockFallsBackToLockSettings(t *testing.T) {
+	for _, tt := range []struct{ policy, locks, want string }{
+		{policyUnlocked, "", "false"},
+		{policySecure, "", "true"},
+		{policyAndroid17, fmt.Sprintf(lockSettings, "NONE"), "false"},
+		{policyAndroid17, fmt.Sprintf(lockSettings, "PIN"), "true"}, // set and read on a moto g15
+		{policyAndroid17, fmt.Sprintf(lockSettings, "PATTERN"), "true"},
+		{policyAndroid17, "Can't find service: lock_settings\n", ""},
+	} {
+		s := &Server{}
+		fakeShell(s, map[string]string{"dumpsys window policy": tt.policy, "dumpsys lock_settings": tt.locks})
+		if got, err := s.secureLock(context.Background(), "A"); err != nil || got != tt.want {
+			t.Errorf("secureLock(%q, %q) = %q, %v; want %q", tt.policy, tt.locks, got, err, tt.want)
+		}
+	}
+}
+
+// A radio whose reset failed is rebooted only when its service hangs too
+// (sair#139): a dump that answers means the phone just ignores svc.
+func TestRebootIfWedgedOnlyWhenTheServiceHangs(t *testing.T) {
+	for _, hung := range []bool{false, true} {
+		s := &Server{radioTimeout: 10 * time.Millisecond, rebootTimeout: time.Second}
+		var cmds []string
+		s.shell = func(ctx context.Context, _, command string) (string, error) {
+			cmds = append(cmds, command)
+			switch command {
+			case "dumpsys wifi":
+				if hung {
+					<-ctx.Done()
+					return "", ctx.Err()
+				}
+				return "Wi-Fi is enabled\n", nil
+			case "dumpsys window policy":
+				return policyUnlocked, nil
+			case "cat /proc/sys/kernel/random/boot_id":
+				return "old-boot\n", nil
+			case "cat /proc/sys/kernel/random/boot_id; getprop sys.boot_completed":
+				return "new-boot\n1\n", nil
+			}
+			return "", nil
+		}
+		resp, err := s.RebootIfWedged(context.Background(), &pb.WedgedRadioRequest{Serial: "A", Radio: "wifi"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Rebooted != hung || (countOf(cmds, "reboot") == 1) != hung {
+			t.Errorf("hung=%v: rebooted=%v, commands %q", hung, resp.Rebooted, cmds)
+		}
+	}
+}

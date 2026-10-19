@@ -25,6 +25,7 @@ const (
 	Orchestrator_LockHeartbeat_FullMethodName = "/orchestrator.Orchestrator/LockHeartbeat"
 	Orchestrator_ReportDevices_FullMethodName = "/orchestrator.Orchestrator/ReportDevices"
 	Orchestrator_CheckKey_FullMethodName      = "/orchestrator.Orchestrator/CheckKey"
+	Orchestrator_AddLockLabels_FullMethodName = "/orchestrator.Orchestrator/AddLockLabels"
 	Orchestrator_Session_FullMethodName       = "/orchestrator.Orchestrator/Session"
 	Orchestrator_Tunnel_FullMethodName        = "/orchestrator.Orchestrator/Tunnel"
 )
@@ -43,6 +44,10 @@ type OrchestratorClient interface {
 	// each one as a guest key. Keys of other accounts, listed as guests or not,
 	// and unknown keys both answer false; the proxy never learns which.
 	CheckKey(ctx context.Context, in *CheckKeyRequest, opts ...grpc.CallOption) (*CheckKeyResponse, error)
+	// Labels for a held lock, for roles a client only knows once the serials
+	// are granted (sair#141). Same labels as AcquireLockRequest.labels; a key
+	// set again replaces its value.
+	AddLockLabels(ctx context.Context, in *AddLockLabelsRequest, opts ...grpc.CallOption) (*AddLockLabelsResponse, error)
 	// One long-lived stream per proxy: version and identity first, then device
 	// reports, lock heartbeats, lock log entries and bench events; the orchestrator pushes
 	// lock expiry back. Replaces the periodic unary calls for proxies that use it.
@@ -121,6 +126,16 @@ func (c *orchestratorClient) CheckKey(ctx context.Context, in *CheckKeyRequest, 
 	return out, nil
 }
 
+func (c *orchestratorClient) AddLockLabels(ctx context.Context, in *AddLockLabelsRequest, opts ...grpc.CallOption) (*AddLockLabelsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddLockLabelsResponse)
+	err := c.cc.Invoke(ctx, Orchestrator_AddLockLabels_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orchestratorClient) Session(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ProxyMessage, OrchestratorMessage], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &Orchestrator_ServiceDesc.Streams[0], Orchestrator_Session_FullMethodName, cOpts...)
@@ -161,6 +176,10 @@ type OrchestratorServer interface {
 	// each one as a guest key. Keys of other accounts, listed as guests or not,
 	// and unknown keys both answer false; the proxy never learns which.
 	CheckKey(context.Context, *CheckKeyRequest) (*CheckKeyResponse, error)
+	// Labels for a held lock, for roles a client only knows once the serials
+	// are granted (sair#141). Same labels as AcquireLockRequest.labels; a key
+	// set again replaces its value.
+	AddLockLabels(context.Context, *AddLockLabelsRequest) (*AddLockLabelsResponse, error)
 	// One long-lived stream per proxy: version and identity first, then device
 	// reports, lock heartbeats, lock log entries and bench events; the orchestrator pushes
 	// lock expiry back. Replaces the periodic unary calls for proxies that use it.
@@ -196,6 +215,9 @@ func (UnimplementedOrchestratorServer) ReportDevices(context.Context, *ReportDev
 }
 func (UnimplementedOrchestratorServer) CheckKey(context.Context, *CheckKeyRequest) (*CheckKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckKey not implemented")
+}
+func (UnimplementedOrchestratorServer) AddLockLabels(context.Context, *AddLockLabelsRequest) (*AddLockLabelsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddLockLabels not implemented")
 }
 func (UnimplementedOrchestratorServer) Session(grpc.BidiStreamingServer[ProxyMessage, OrchestratorMessage]) error {
 	return status.Error(codes.Unimplemented, "method Session not implemented")
@@ -332,6 +354,24 @@ func _Orchestrator_CheckKey_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Orchestrator_AddLockLabels_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddLockLabelsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorServer).AddLockLabels(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Orchestrator_AddLockLabels_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorServer).AddLockLabels(ctx, req.(*AddLockLabelsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Orchestrator_Session_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(OrchestratorServer).Session(&grpc.GenericServerStream[ProxyMessage, OrchestratorMessage]{ServerStream: stream})
 }
@@ -376,6 +416,10 @@ var Orchestrator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CheckKey",
 			Handler:    _Orchestrator_CheckKey_Handler,
+		},
+		{
+			MethodName: "AddLockLabels",
+			Handler:    _Orchestrator_AddLockLabels_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

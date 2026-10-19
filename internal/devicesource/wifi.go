@@ -28,7 +28,10 @@ func (s *Server) SetWifi(ctx context.Context, req *pb.WifiRequest) (*emptypb.Emp
 	if s.wifiSSID == "" {
 		return nil, status.Error(codes.FailedPrecondition, "WIFI_SSID is not set on the device source; Wi-Fi is not managed on this bench")
 	}
-	slog.Info("SetWifi", "serial", req.Serial, "state", req.State)
+	if _, ok := wifiBands[req.Band]; req.Band != "" && (!ok || req.State != pb.WifiRequest_ON) {
+		return nil, status.Errorf(codes.InvalidArgument, "Wi-Fi band %q: want 2.4, 5 or 6, and only with ON", req.Band)
+	}
+	slog.Info("SetWifi", "serial", req.Serial, "state", req.State, "band", req.Band)
 
 	var err error
 	switch req.State {
@@ -36,8 +39,8 @@ func (s *Server) SetWifi(ctx context.Context, req *pb.WifiRequest) (*emptypb.Emp
 		// Radio toggled and back on, not associated, no Internet: the next
 		// lock starts from that, not from "it will be shortly" (sair#86).
 		if err = s.wifiForget(ctx, req.Serial); err == nil {
-			if _, err = s.shell(ctx, req.Serial, "svc wifi disable"); err == nil {
-				if _, err = s.shell(ctx, req.Serial, "svc wifi enable"); err == nil {
+			if err = s.svc(ctx, req.Serial, "wifi disable"); err == nil {
+				if err = s.svc(ctx, req.Serial, "wifi enable"); err == nil {
 					err = s.waitFor(ctx, s.wifiOffTimeout, req.Serial+" not back to radio on and offline", func() error {
 						return s.checkOffline(ctx, req.Serial, true)
 					})
@@ -51,7 +54,7 @@ func (s *Server) SetWifi(ctx context.Context, req *pb.WifiRequest) (*emptypb.Emp
 			})
 		}
 	case pb.WifiRequest_ON:
-		err = s.wifiConnect(ctx, req.Serial)
+		err = s.wifiConnect(ctx, req.Serial, req.Band)
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unknown Wi-Fi state %d", req.State)
 	}
@@ -88,11 +91,25 @@ func (s *Server) wifiForget(ctx context.Context, serial string) error {
 
 // wifiConnect suggests the bench network and waits until the device is
 // online on it (see checkOnline), so a job never gets a phone that is still
-// associating, or one that answers a ping over some other network.
-func (s *Server) wifiConnect(ctx context.Context, serial string) error {
+// associating, or one that answers a ping over some other network. With a
+// band the suggestion is pinned to one BSSID in it (sair#143), and the old
+// suggestions and saved networks are forgotten first: a phone already online
+// on another band otherwise stays there, as adding a suggestion does not
+// drop the current BSSID (sair#152).
+func (s *Server) wifiConnect(ctx context.Context, serial, band string) error {
 	add := "cmd wifi add-suggestion " + shellQuote(s.wifiSSID) + " open"
 	if s.wifiPassphrase != "" {
 		add = "cmd wifi add-suggestion " + shellQuote(s.wifiSSID) + " wpa2 " + shellQuote(s.wifiPassphrase)
+	}
+	if band != "" {
+		bssid, err := s.wifiPickBSSID(ctx, serial, band)
+		if err != nil {
+			return err
+		}
+		if err := s.wifiForget(ctx, serial); err != nil {
+			return err
+		}
+		add += " -b " + shellQuote(bssid)
 	}
 	if _, err := s.shell(ctx, serial, add); err != nil {
 		return fmt.Errorf("add suggestion: %w", err)
@@ -103,13 +120,85 @@ func (s *Server) wifiConnect(ctx context.Context, serial string) error {
 	start := time.Now()
 	var last error
 	err := s.waitFor(ctx, s.wifiTimeout, fmt.Sprintf("%s not online on Wi-Fi %q", serial, s.wifiSSID), func() error {
-		last = s.checkOnline(ctx, serial)
+		last = s.checkOnline(ctx, serial, band)
 		return last
 	})
 	if ctx.Err() == nil { // a cancelled job says nothing about the phone
 		s.recordJoin(serial, time.Since(start), err, last)
 	}
 	return err
+}
+
+// wifiBands are the frequency ranges, in MHz, of WifiRequest.band.
+var wifiBands = map[string][2]int{"2.4": {2400, 2500}, "5": {4900, 5900}, "6": {5925, 7125}}
+
+// wifiPickBSSID scans until the phone sees the bench SSID in band and
+// returns its strongest BSSID there, waiting up to wifiTimeout for one.
+func (s *Server) wifiPickBSSID(ctx context.Context, serial, band string) (string, error) {
+	if _, err := s.shell(ctx, serial, "cmd wifi start-scan"); err != nil {
+		return "", fmt.Errorf("start scan: %w", err)
+	}
+	var best scanResult
+	err := s.waitFor(ctx, s.wifiTimeout, fmt.Sprintf("%s does not see Wi-Fi %q on %s GHz", serial, s.wifiSSID, band), func() error {
+		out, err := s.shell(ctx, serial, "cmd wifi list-scan-results")
+		if err != nil {
+			return fmt.Errorf("list-scan-results: %w", err)
+		}
+		r := wifiBands[band]
+		best = scanResult{}
+		for _, sr := range parseScanResults(out) {
+			if sr.ssid == s.wifiSSID && sr.freq >= r[0] && sr.freq <= r[1] && (best.bssid == "" || sr.rssi > best.rssi) {
+				best = sr
+			}
+		}
+		if best.bssid == "" {
+			return errors.New("not in the scan results yet")
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	slog.Info("Wi-Fi band pinned", "serial", serial, "band", band, "bssid", best.bssid, "frequencyMhz", best.freq, "rssi", best.rssi)
+	return best.bssid, nil
+}
+
+type scanResult struct {
+	bssid      string
+	freq, rssi int
+	ssid       string
+}
+
+// parseScanResults reads `cmd wifi list-scan-results` (a hidden network has
+// no SSID, so its flags come straight after the age):
+//
+//	  BSSID              Frequency      RSSI           Age(sec)     SSID                                 Flags
+//	aa:bb:cc:dd:ee:ff       2462        -49              1.220    bench net                         [WPA2-PSK-CCMP-128][RSN-PSK-CCMP-128][ESS]
+//	aa:bb:cc:dd:ee:fe       2427    -20(0:-28/1:-21)    75.077    bench net                         [WPA2-PSK-CCMP-128][ESS]
+func parseScanResults(out string) []scanResult {
+	var rs []scanResult
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 4 || strings.Count(f[0], ":") != 5 {
+			continue
+		}
+		freq, err1 := strconv.Atoi(f[1])
+		rssi, err2 := strconv.Atoi(strings.SplitN(f[2], "(", 2)[0]) // Pixels on Android 16+ add per-chain values: -20(0:-28/1:-21)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		var ssid []string
+		for _, w := range f[4:] {
+			if strings.HasPrefix(w, "[") {
+				break
+			}
+			ssid = append(ssid, w)
+		}
+		// ponytail: runs of spaces inside an SSID collapse to one; read
+		// the column offsets from the header if a bench SSID ever has them.
+		rs = append(rs, scanResult{bssid: f[0], freq: freq, rssi: rssi, ssid: strings.Join(ssid, " ")})
+	}
+	return rs
 }
 
 // wifiStats is one phone's Wi-Fi ON outcomes since the device source started
@@ -243,8 +332,9 @@ func (s *Server) waitFor(ctx context.Context, timeout time.Duration, what string
 // checkOnline is the ON contract (sair#87): associated to the bench SSID,
 // that Wi-Fi is the validated default network (Android's own verdict, so the
 // app under test sees it as online too), and wifiPingHost answers, which with
-// a hostname also proves DNS. nil when all three hold, else why not.
-func (s *Server) checkOnline(ctx context.Context, serial string) error {
+// a hostname also proves DNS. With a band the association must be in it too.
+// nil when all hold, else why not.
+func (s *Server) checkOnline(ctx context.Context, serial, band string) error {
 	st, err := s.wifiStatus(ctx, serial)
 	if err != nil {
 		return err
@@ -256,6 +346,8 @@ func (s *Server) checkOnline(ctx context.Context, serial string) error {
 		return errNotAssociated
 	case st.ssid != s.wifiSSID:
 		return fmt.Errorf("%w %q, not %q", errOtherSSID, st.ssid, s.wifiSSID)
+	case band != "" && (st.freq < wifiBands[band][0] || st.freq > wifiBands[band][1]):
+		return fmt.Errorf("associated on %d MHz, not %s GHz", st.freq, band)
 	}
 	out, err := s.shell(ctx, serial, "dumpsys connectivity")
 	if err != nil {
@@ -302,10 +394,11 @@ func (s *Server) checkOffline(ctx context.Context, serial string, radioOn bool) 
 type wifiStatusInfo struct {
 	enabled bool
 	ssid    string // "" when not associated
+	freq    int    // MHz, 0 when not associated
 }
 
 func (s *Server) wifiStatus(ctx context.Context, serial string) (wifiStatusInfo, error) {
-	out, err := s.shell(ctx, serial, "cmd wifi status")
+	out, err := s.radioShell(ctx, serial, "cmd wifi status")
 	if err != nil {
 		return wifiStatusInfo{}, fmt.Errorf("cmd wifi status: %w", err)
 	}
@@ -316,6 +409,7 @@ func (s *Server) wifiStatus(ctx context.Context, serial string) (wifiStatusInfo,
 //
 //	Wifi is enabled
 //	Wifi is connected to "bench"      (or: Wifi is not connected)
+//	WifiInfo: SSID: "bench", BSSID: ..., Frequency: 6295MHz, ...
 func parseWifiStatus(out string) wifiStatusInfo {
 	var st wifiStatusInfo
 	for _, line := range strings.Split(out, "\n") {
@@ -324,6 +418,8 @@ func parseWifiStatus(out string) wifiStatusInfo {
 			st.enabled = true
 		} else if ssid, ok := strings.CutPrefix(line, "Wifi is connected to "); ok {
 			st.ssid = strings.Trim(ssid, `"`)
+		} else if _, rest, ok := strings.Cut(line, "Frequency: "); ok && strings.HasPrefix(line, "WifiInfo:") {
+			st.freq, _ = strconv.Atoi(strings.SplitN(rest, "MHz", 2)[0])
 		}
 	}
 	return st

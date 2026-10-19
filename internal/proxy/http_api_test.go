@@ -12,8 +12,10 @@ import (
 
 	"github.com/compscidr/sair/internal/version"
 	dspb "github.com/compscidr/sair/proto/devicesource"
+	pb "github.com/compscidr/sair/proto/orchestrator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestHTTPApiAuthRequired(t *testing.T) {
@@ -220,15 +222,18 @@ func TestHTTPApiGuestKeys(t *testing.T) {
 }
 
 // A key that is neither the owner's nor a listed guest is checked with the
-// orchestrator (sair#120): a key on the owner's account is let in, any other
-// is refused, and both answers are cached so repeats cost no round trip.
+// orchestrator with the guest keys (sair#120, sair#131): a key on the owner's
+// or a guest's account is let in, any other is refused, and both answers are cached so repeats cost no round trip.
 // An orchestrator error (down, or one that predates CheckKey) refuses the
 // request without caching, so a transient outage does not lock a key out.
 func TestHTTPApiAsksOrchestratorAboutUnlistedKeys(t *testing.T) {
 	calls := map[string]int{}
 	answers := map[string]bool{"sibling-key": true}
 	var checkErr error
-	api := &HTTPApi{apiKey: "owner-key", guestKeys: []string{"guest-a"}, checkKey: func(key string) (bool, error) {
+	api := &HTTPApi{apiKey: "owner-key", guestKeys: []string{"guest-a"}, checkKey: func(key string, guestKeys []string) (bool, error) {
+		if !slices.Equal(guestKeys, []string{"guest-a"}) {
+			t.Errorf("guest keys not passed along: %v", guestKeys)
+		}
 		calls[key]++
 		return answers[key], checkErr
 	}}
@@ -280,6 +285,7 @@ func TestHTTPApiAcquireForwardsGuestKey(t *testing.T) {
 		{"owner key sends empty tenant_api_key", "owner-key", ""},
 		{"guest key is forwarded", "guest-a", "guest-a"},
 		{"another key on the owner's account is forwarded", "sibling-key", "sibling-key"},
+		{"another key on a guest's account is forwarded", "guest-sibling", "guest-sibling"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -359,7 +365,7 @@ func TestHTTPApiDeviceReportCarriesWifiStats(t *testing.T) {
 func TestHTTPApiWifiDeviceToken(t *testing.T) {
 	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
 	var calls []string
-	m.setWifi = func(serial string, state dspb.WifiRequest_State) error {
+	m.setWifi = func(serial string, state dspb.WifiRequest_State, _ string) error {
 		calls = append(calls, serial+" "+state.String())
 		return nil
 	}
@@ -405,7 +411,107 @@ func TestHTTPApiWifiDeviceToken(t *testing.T) {
 	if got := post(wifi+"&serial=A", sp.DeviceToken); got != http.StatusUnauthorized {
 		t.Errorf("after release: %d", got)
 	}
-	if want := []string{"A ON", "A RESET"}; !slices.Equal(calls, want) {
+	if want := []string{"A ON", "A RESET", "A ON"}; !slices.Equal(calls, want) {
 		t.Errorf("calls = %q, want %q", calls, want)
+	}
+}
+
+// /wifi passes band through to the device source and refuses one it would
+// not take, or one with state off (sair#143).
+func TestHTTPApiWifiBand(t *testing.T) {
+	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
+	var bands []string
+	m.setWifi = func(_ string, _ dspb.WifiRequest_State, band string) error { bands = append(bands, band); return nil }
+	if _, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	api := &HTTPApi{apiKey: "test-key", scopedPortManager: m}
+	for path, want := range map[string]int{
+		"/wifi?lock_id=L1&state=on&band=2.4": http.StatusOK,
+		"/wifi?lock_id=L1&state=on&band=60":  http.StatusBadRequest,
+		"/wifi?lock_id=L1&state=off&band=5":  http.StatusBadRequest,
+	} {
+		req := httptest.NewRequest("POST", path, nil)
+		req.Header.Set("x-api-key", "test-key")
+		w := httptest.NewRecorder()
+		api.handleWifi(w, req)
+		if w.Code != want {
+			t.Errorf("%s: %d, want %d", path, w.Code, want)
+		}
+	}
+	if !slices.Equal(bands, []string{"2.4"}) {
+		t.Errorf("bands sent = %q, want [2.4]", bands)
+	}
+}
+
+func TestParseLabels(t *testing.T) {
+	got, err := parseLabels([]string{"os=14", "39111JEHN16292:role=group-owner", "192.168.1.5:5555:role=a=b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []*pb.Label{{Key: "os", Value: "14"}, {Serial: "39111JEHN16292", Key: "role", Value: "group-owner"}, {Serial: "192.168.1.5:5555", Key: "role", Value: "a=b"}}
+	if !slices.EqualFunc(got, want, func(a, b *pb.Label) bool { return proto.Equal(a, b) }) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	for _, bad := range [][]string{{"novalue"}, {"=v"}, {"S:=v"}, {":k=v"}, {strings.Repeat("k", 65) + "=v"}, {"k=" + strings.Repeat("v", 257)}, slices.Repeat([]string{"k=v"}, 33)} {
+		if _, err := parseLabels(bad); err == nil {
+			t.Errorf("%.40q: want an error", bad)
+		}
+	}
+}
+
+func TestHTTPApiAcquireForwardsJob(t *testing.T) {
+	fake := &fakeOrchClient{err: status.Error(codes.ResourceExhausted, "busy")}
+	api := &HTTPApi{apiKey: "test-key", scopedPortManager: NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "test-key"}, nil, 0)}
+	req := httptest.NewRequest("POST", "/acquire?repo=o/r&job=test&run_attempt=2&sha=abc&branch=main&workflow=CI&stage=api-34&label=os=14&label=S1:role=go", nil)
+	req.Header.Set("x-api-key", "test-key")
+	api.handleAcquire(httptest.NewRecorder(), req)
+
+	want := &pb.AcquireLockRequest{Repo: "o/r", Job: "test", RunAttempt: 2, Sha: "abc", Branch: "main", Workflow: "CI", Stage: "api-34",
+		Labels: []*pb.Label{{Key: "os", Value: "14"}, {Serial: "S1", Key: "role", Value: "go"}}}
+	got := fake.lastAcquire
+	got.ProxyId, got.Priority = "", 0
+	if !proto.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+
+	req = httptest.NewRequest("POST", "/acquire?run_attempt=x", nil)
+	req.Header.Set("x-api-key", "test-key")
+	w := httptest.NewRecorder()
+	api.handleAcquire(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("bad run_attempt: %d", w.Code)
+	}
+}
+
+func TestHTTPApiLabel(t *testing.T) {
+	fake := &fakeOrchClient{}
+	m := NewScopedPortManager(&CommandRouter{orchClient: fake, apiKey: "test-key"}, nil, 3600)
+	m.removeReverse = func(string) error { return nil }
+	if _, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	api := &HTTPApi{apiKey: "test-key", scopedPortManager: m}
+	post := func(query string) int {
+		req := httptest.NewRequest("POST", "/label"+query, nil)
+		req.Header.Set("x-api-key", "test-key")
+		w := httptest.NewRecorder()
+		api.handleLabel(w, req)
+		return w.Code
+	}
+	for query, want := range map[string]int{
+		"?label=k=v":                  http.StatusBadRequest,
+		"?lock_id=L1":                 http.StatusBadRequest,
+		"?lock_id=L1&label=bad":       http.StatusBadRequest,
+		"?lock_id=nope&label=k=v":     http.StatusNotFound,
+		"?lock_id=L1&label=B:role=x":  http.StatusForbidden,
+		"?lock_id=L1&label=A:role=go": http.StatusOK,
+	} {
+		if got := post(query); got != want {
+			t.Errorf("%s: got %d, want %d", query, got, want)
+		}
+	}
+	if got := fake.lastLabels; got.GetLockId() != "L1" || len(got.GetLabels()) != 1 || got.Labels[0].Serial != "A" {
+		t.Errorf("orchestrator got %v", got)
 	}
 }

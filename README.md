@@ -31,8 +31,8 @@ CI job 3 ···  Orchestrator: job 3 waits in the queue until
 
 ## GitHub Action
 
-This repo is also a GitHub Action that puts `sair-acquire`, `sair-release` and
-`sair-wifi` on `PATH`. The tools need an orchestrator account: sign up at
+This repo is also a GitHub Action that puts `sair-acquire`, `sair-release`,
+`sair-wifi`, `sair-locks` and `sair-label` on `PATH`. The tools need an orchestrator account: sign up at
 [sair.run](https://sair.run) to get an API key, store it as the repository
 secret `SAIR_API_KEY`, and set the repository variable `SAIR_PROXY_URL` to
 your bench's proxy (see [Run](#run)). Then:
@@ -176,12 +176,18 @@ you:
 - **On acquire** each phone joins the bench Wi-Fi and the acquire returns only
   once the phone is *online* (below); it fails otherwise. `--no-wifi` hands it
   over *offline* instead, verified the same way rather than trusting the
-  previous release.
+  previous release. `--wifi-band 2.4|5|6` (also `sair-wifi on --band`) joins
+  on that GHz band: the phone scans, the suggestion is pinned to the
+  strongest BSSID of `WIFI_SSID` it sees in the band, and the join fails if
+  it sees none. The phone's `cmd wifi status` shows the BSSID and frequency
+  it joined.
 - **On release**, and when a lock expires or is cancelled, each phone is reset:
   every suggestion added through `adb shell` and every saved network is
   forgotten and the radio is toggled, and the reset waits until the phone is
   offline with the radio back on. The next job never inherits the last one's
-  network.
+  network. The phone then rejoins the bench Wi-Fi, so it is online between
+  leases and app updates can install (see the Play Store below); the next
+  acquire puts it in the state that job asked for either way.
 - **Also on release**, every third-party package the phone did not have when
   the device source first saw it is uninstalled (test APKs and `.test`
   packages included, with their app data and signed-in accounts), and the
@@ -196,6 +202,14 @@ you:
   `if: always()` release step, its runner died, or the proxy was down when
   the lock expired, is cleaned up by the next job, whose lock log then shows
   `sair: uninstalled … (left by an earlier job)`.
+- **No leaked UiAutomation**, on release and on acquire: a killed `am
+  instrument` or a leftover uiautomator server can leave a UiAutomation
+  registered, failing every later instrumentation with `UiAutomationService
+  … already registered!`. A `uiautomator dump` probe detects it; sair then
+  kills the shell user's `app_process`/`uiautomator` processes, which
+  unregisters it, and reboots only if the probe still fails (never a phone
+  with a secure lock). The lock log gets `sair: cleared a leaked UiAutomation
+  registration (killed … | rebooted)`.
 - **Awake and unlocked**, on acquire and again after the release reset: the
   screen is woken and the keyguard dismissed, then verified (`dumpsys power`
   says `Awake`, `dumpsys window policy` says the keyguard is not showing),
@@ -218,6 +232,43 @@ you:
   is never rebooted this way, since it would come back on "unlock to start"
   and need a human; the device source logs that with the fix. The wake and
   the reboot run whether or not the bench manages Wi-Fi.
+- **Bluetooth cycled on release**, after the Wi-Fi reset: `svc bluetooth
+  disable`, wait until `dumpsys bluetooth_manager` says the adapter is fully
+  `OFF`, `svc bluetooth enable`, wait until it says `ON` (30 s each). A BLE
+  stack an earlier job wedged (stuck advertisers, a scanner that never
+  restarted) does not reach the next job as "No peers discovered". Disable
+  alone often stops at `BLE_ON` (classic off, BLE still up for "Nearby device
+  scanning" or an app that asked for BLE), so sair turns
+  `ble_scan_always_enabled` off for the cycle and, if BLE is still held,
+  force-stops the packages the dump lists as BLE apps (on One UI,
+  `com.samsung.android.beaconmanager` and `com.samsung.android.mdx.kit`). The
+  setting is restored before Bluetooth comes back on. Skipped after an uptime
+  reboot, and done on acquire instead when no release reset ran since the
+  phone's last job (or since the proxy started). The lock log gets
+  `sair: Bluetooth cycled off and on (…)`. A radio that does not go fully off
+  or come back on is in the lock log and is the device's `warning` until a
+  cycle succeeds, but does not fail the acquire, since most jobs never use
+  Bluetooth. Bluetooth is always left on. Phones without the adapter dump
+  (Android 4.x) are skipped.
+- **No Play Store updates during a lease**: on acquire the Play Store is
+  disabled (`pm disable-user com.android.vending`) and on release it is
+  enabled again, so updates install between leases, when the phone is back
+  on the bench Wi-Fi (or mobile data). An update of Google
+  Play services force-stops every app that uses it, the app under
+  instrumentation included, which fails a job with `Process crashed`. The
+  lock log gets `sair: Play Store disabled for the lease`. A phone that
+  refuses (Xiaomi: `Cannot disable system packages`) says so in the lock log
+  and keeps the lock. Phones without the Play Store and Android 4.x (whose
+  `pm` crashes on it) are skipped. A job that needs the Play Store itself
+  (billing, in-app updates, Play Integrity) cannot use it on these phones.
+- **Rebooted when a radio is wedged**: each `svc wifi` / `svc bluetooth`
+  toggle and radio state read is bounded (15 s). When the Wi-Fi reset or the
+  Bluetooth cycle fails, the device source probes the radio's service
+  (`dumpsys wifi` / `dumpsys bluetooth_manager`); only if that hangs too is
+  the phone rebooted (same rules as the uptime reboot) and the reset run
+  again. A phone that hangs on `svc` with a healthy radio is not rebooted.
+  The lock log gets `sair: radio wedged (wifi|bluetooth), rebooted`, and a
+  radio still bad after the reboot fails the reset as before.
 
 A bench that was already running jobs has phones carrying the last job's
 packages, so "first seen" would record those into the baseline. A test package
@@ -377,7 +428,7 @@ grpcurl -plaintext localhost:8080 devicesource.DeviceSource/GetDevices
 | `ORCHESTRATOR_ADDR` | `orchestrator.sair.run:9090` | Orchestrator gRPC address (lock management) |
 | `ORCHESTRATOR_TLS` | `false` (auto-enabled for hosted) | Use TLS for orchestrator connection |
 | `SAIR_API_KEY` | `dev-key-123` | API key for authentication |
-| `SAIR_GUEST_API_KEYS` | empty | Comma-separated API keys of **other** accounts allowed to lock this proxy's devices. Every key on the proxy's own account is accepted without being listed. See "Guest tenants" below. |
+| `SAIR_GUEST_API_KEYS` | empty | Comma-separated API keys of **other** accounts allowed to lock this proxy's devices. Every key on the proxy's own account, and every other key on a listed guest's account, is accepted without being listed. See "Guest tenants" below. |
 | `ADB_PROXY_PORT` | `5037` | ADB protocol listen port |
 | `PROXY_HTTP_PORT` | `8550` | HTTP API listen port |
 | `PROXY_HTTP_HOST` | `0.0.0.0` | HTTP API bind address |
@@ -441,7 +492,11 @@ physical phone in one lock domain, so no two can hold it together, and the
 owner's jobs are served before anyone else's when a phone frees up.
 
 A guest key is accepted on every proxy endpoint (`/acquire`, `/release`,
-`/wifi`, `/status`), the same as the owner's key. Any other key is refused.
+`/wifi`, `/label`, `/status`), the same as the owner's key. So is every other key on
+a listed guest's account: listing one key grants that account, so the guest
+can add or rotate keys without editing the proxy's environment (the listed
+key must stay valid, since it is how the orchestrator finds the account).
+Any other key is refused.
 Guest keys need an orchestrator that understands them; an older one ignores
 the field and records the lock under the owner.
 
@@ -449,7 +504,7 @@ the field and records the lock under the owner.
 
 On GitHub Actions, `uses: compscidr/sair@v0.0.21` (or any later release tag)
 puts the tools on `PATH`; see the workflow example below. Elsewhere, copy
-`tools/sair-acquire`, `tools/sair-release` and `tools/sair-wifi` into your CI project or add this
+`tools/sair-acquire`, `tools/sair-release`, `tools/sair-wifi`, `tools/sair-locks` and `tools/sair-label` into your CI project or add this
 repo's `tools/` directory to `PATH`.
 
 **Acquire** a device lock (blocks until devices are available):
@@ -501,9 +556,21 @@ eval $(sair-acquire --priority -1)
 # Phones verified offline (default: joined to the bench Wi-Fi and online)
 eval $(sair-acquire --no-wifi)
 
+# Join the bench Wi-Fi on one band of a dual/tri-band AP (2.4, 5 or 6 GHz)
+eval $(sair-acquire --wifi-band 2.4)
+
+# Tell matrix legs of one job apart (default: $SAIR_STAGE), and label the
+# lease or one of its devices for the job views
+eval $(sair-acquire --stage api-34 --label suite=smoke --label DEVICE_A:role=group-owner)
+
+# Labels only known once the serials are granted; a key labeled again takes
+# the new value (needs a proxy with /label)
+sair-label DEVICE_A:role=group-owner DEVICE_B:role=client
+
 # Drop and restore the network mid-job (all locked devices, or --serial)
 sair-wifi off
 sair-wifi on
+sair-wifi on --band 5
 
 # Which release the tools (or a bench's binaries) came from
 sair-acquire --version
@@ -514,6 +581,13 @@ eval $(sair-acquire --url http://proxy-host:8550 --api-key my-key)
 
 # Release with explicit lock ID
 sair-release --lock-id <lock-id>
+
+# Every lock your account holds (all proxies, all keys) and the ones that
+# ended in the last hour, with how; asks the orchestrator, not the proxy
+# (SAIR_ORCHESTRATOR_URL, default https://orchestrator.sair.run)
+sair-locks
+# Release every lock this key holds, e.g. after a crashed agent or killed job
+sair-locks --release-mine
 ```
 
 ### Device-side Wi-Fi control
@@ -755,9 +829,15 @@ Key points about the workflow:
   returned) and ships it to the orchestrator on each heartbeat and on release,
   so the job pages show what actually ran on the device even for jobs that
   timed out. The bare port records nothing.
-- On GitHub Actions `sair-acquire` also sends the repository and a link to the
-  run (from `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, ...), which the dashboards show
-  per job. Elsewhere pass `--repo` and `--run-url`.
+- On GitHub Actions `sair-acquire` also sends the repository, a link to the
+  run, the job id, run attempt, commit, branch and workflow (from
+  `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, `GITHUB_JOB`, `GITHUB_RUN_ATTEMPT`,
+  `GITHUB_SHA`, `GITHUB_HEAD_REF` or `GITHUB_REF_NAME`, `GITHUB_WORKFLOW`),
+  which the dashboards show per job. Elsewhere pass `--repo`, `--run-url`,
+  `--job`, `--run-attempt`, `--sha`, `--branch` and `--workflow`.
+  `GITHUB_JOB` is the same for every leg of a matrix job, so set `SAIR_STAGE`
+  (e.g. `SAIR_STAGE: api-${{ matrix.api }}`) or pass `--stage` to tell the legs
+  apart. A proxy older than these fields ignores them.
 - Outside Actions, use `ACQUIRE_OUTPUT=$(sair-acquire)` instead of
   `eval $(sair-acquire)` so a failed acquire fails the step, then `eval` the
   output on success.

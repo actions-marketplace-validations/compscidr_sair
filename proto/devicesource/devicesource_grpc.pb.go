@@ -20,15 +20,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DeviceSource_GetDevices_FullMethodName      = "/devicesource.DeviceSource/GetDevices"
-	DeviceSource_EnqueueCommand_FullMethodName  = "/devicesource.DeviceSource/EnqueueCommand"
-	DeviceSource_ExecOnDevice_FullMethodName    = "/devicesource.DeviceSource/ExecOnDevice"
-	DeviceSource_ForwardToDevice_FullMethodName = "/devicesource.DeviceSource/ForwardToDevice"
-	DeviceSource_SetWifi_FullMethodName         = "/devicesource.DeviceSource/SetWifi"
-	DeviceSource_ResetPackages_FullMethodName   = "/devicesource.DeviceSource/ResetPackages"
-	DeviceSource_Wake_FullMethodName            = "/devicesource.DeviceSource/Wake"
-	DeviceSource_RebootIfStale_FullMethodName   = "/devicesource.DeviceSource/RebootIfStale"
-	DeviceSource_RecentLog_FullMethodName       = "/devicesource.DeviceSource/RecentLog"
+	DeviceSource_GetDevices_FullMethodName        = "/devicesource.DeviceSource/GetDevices"
+	DeviceSource_EnqueueCommand_FullMethodName    = "/devicesource.DeviceSource/EnqueueCommand"
+	DeviceSource_ExecOnDevice_FullMethodName      = "/devicesource.DeviceSource/ExecOnDevice"
+	DeviceSource_ForwardToDevice_FullMethodName   = "/devicesource.DeviceSource/ForwardToDevice"
+	DeviceSource_SetWifi_FullMethodName           = "/devicesource.DeviceSource/SetWifi"
+	DeviceSource_ResetPackages_FullMethodName     = "/devicesource.DeviceSource/ResetPackages"
+	DeviceSource_Wake_FullMethodName              = "/devicesource.DeviceSource/Wake"
+	DeviceSource_RebootIfStale_FullMethodName     = "/devicesource.DeviceSource/RebootIfStale"
+	DeviceSource_ResetBluetooth_FullMethodName    = "/devicesource.DeviceSource/ResetBluetooth"
+	DeviceSource_RebootIfWedged_FullMethodName    = "/devicesource.DeviceSource/RebootIfWedged"
+	DeviceSource_ClearUiAutomation_FullMethodName = "/devicesource.DeviceSource/ClearUiAutomation"
+	DeviceSource_RecentLog_FullMethodName         = "/devicesource.DeviceSource/RecentLog"
+	DeviceSource_HoldUpdates_FullMethodName       = "/devicesource.DeviceSource/HoldUpdates"
 )
 
 // DeviceSourceClient is the client API for DeviceSource service.
@@ -62,10 +66,38 @@ type DeviceSourceClient interface {
 	// unacquired and wakes it afterwards. A no-op below the limit or when the
 	// limit is 0.
 	RebootIfStale(ctx context.Context, in *RebootRequest, opts ...grpc.CallOption) (*RebootResponse, error)
+	// Cycle Bluetooth fully off (BLE too, not just classic) and back on, and
+	// wait until the adapter reports ON
+	// (sair#127), so a stack an earlier job wedged does not carry over. Used on
+	// release, and on acquire when that release reset did not run. Bluetooth
+	// is left on. Unimplemented for a phone without the adapter state in
+	// `dumpsys bluetooth_manager` (Android 4.x); DeadlineExceeded, and the
+	// device warning, when the radio does not come back.
+	ResetBluetooth(ctx context.Context, in *ResetBluetoothRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Reboot the device if a radio whose reset just failed is wedged: its
+	// service (`dumpsys wifi` / `dumpsys bluetooth_manager`) no longer answers
+	// (sair#139). A phone whose service answers is left up, since some hang on
+	// `svc` with healthy radios. Same rules as RebootIfStale: never a phone
+	// with a secure lock (FailedPrecondition), and the caller holds the reset
+	// lock, re-runs the reset and wakes the phone afterwards.
+	RebootIfWedged(ctx context.Context, in *WedgedRadioRequest, opts ...grpc.CallOption) (*RebootResponse, error)
+	// Clear a UiAutomation registration a dead session leaked (sair#128),
+	// which fails every later instrumentation with "UiAutomationService ...
+	// already registered!". Probes with `uiautomator dump`; on a leak kills
+	// the shell-launched processes that can hold one, and reboots only if the
+	// probe still fails. The caller holds the device's reset lock.
+	ClearUiAutomation(ctx context.Context, in *UiAutomationRequest, opts ...grpc.CallOption) (*UiAutomationResponse, error)
 	// The device source's recent log lines that mention serial, oldest first,
 	// so the proxy can attach them to a lock log when an acquire or a release
 	// reset fails on that device (sair#97).
 	RecentLog(ctx context.Context, in *RecentLogRequest, opts ...grpc.CallOption) (*RecentLogResponse, error)
+	// Disable the Play Store for a lease (hold) or enable it again (release),
+	// so an auto-update of Play services cannot force-stop the app under test
+	// mid-job (sair#151); updates install between leases. Unimplemented for a
+	// phone without the Play Store or below Android 5, whose pm crashes on it;
+	// FailedPrecondition when the phone refuses (Xiaomi: "Cannot disable
+	// system packages").
+	HoldUpdates(ctx context.Context, in *HoldUpdatesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type deviceSourceClient struct {
@@ -177,10 +209,50 @@ func (c *deviceSourceClient) RebootIfStale(ctx context.Context, in *RebootReques
 	return out, nil
 }
 
+func (c *deviceSourceClient) ResetBluetooth(ctx context.Context, in *ResetBluetoothRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, DeviceSource_ResetBluetooth_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *deviceSourceClient) RebootIfWedged(ctx context.Context, in *WedgedRadioRequest, opts ...grpc.CallOption) (*RebootResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RebootResponse)
+	err := c.cc.Invoke(ctx, DeviceSource_RebootIfWedged_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *deviceSourceClient) ClearUiAutomation(ctx context.Context, in *UiAutomationRequest, opts ...grpc.CallOption) (*UiAutomationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UiAutomationResponse)
+	err := c.cc.Invoke(ctx, DeviceSource_ClearUiAutomation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *deviceSourceClient) RecentLog(ctx context.Context, in *RecentLogRequest, opts ...grpc.CallOption) (*RecentLogResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RecentLogResponse)
 	err := c.cc.Invoke(ctx, DeviceSource_RecentLog_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *deviceSourceClient) HoldUpdates(ctx context.Context, in *HoldUpdatesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, DeviceSource_HoldUpdates_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -218,10 +290,38 @@ type DeviceSourceServer interface {
 	// unacquired and wakes it afterwards. A no-op below the limit or when the
 	// limit is 0.
 	RebootIfStale(context.Context, *RebootRequest) (*RebootResponse, error)
+	// Cycle Bluetooth fully off (BLE too, not just classic) and back on, and
+	// wait until the adapter reports ON
+	// (sair#127), so a stack an earlier job wedged does not carry over. Used on
+	// release, and on acquire when that release reset did not run. Bluetooth
+	// is left on. Unimplemented for a phone without the adapter state in
+	// `dumpsys bluetooth_manager` (Android 4.x); DeadlineExceeded, and the
+	// device warning, when the radio does not come back.
+	ResetBluetooth(context.Context, *ResetBluetoothRequest) (*emptypb.Empty, error)
+	// Reboot the device if a radio whose reset just failed is wedged: its
+	// service (`dumpsys wifi` / `dumpsys bluetooth_manager`) no longer answers
+	// (sair#139). A phone whose service answers is left up, since some hang on
+	// `svc` with healthy radios. Same rules as RebootIfStale: never a phone
+	// with a secure lock (FailedPrecondition), and the caller holds the reset
+	// lock, re-runs the reset and wakes the phone afterwards.
+	RebootIfWedged(context.Context, *WedgedRadioRequest) (*RebootResponse, error)
+	// Clear a UiAutomation registration a dead session leaked (sair#128),
+	// which fails every later instrumentation with "UiAutomationService ...
+	// already registered!". Probes with `uiautomator dump`; on a leak kills
+	// the shell-launched processes that can hold one, and reboots only if the
+	// probe still fails. The caller holds the device's reset lock.
+	ClearUiAutomation(context.Context, *UiAutomationRequest) (*UiAutomationResponse, error)
 	// The device source's recent log lines that mention serial, oldest first,
 	// so the proxy can attach them to a lock log when an acquire or a release
 	// reset fails on that device (sair#97).
 	RecentLog(context.Context, *RecentLogRequest) (*RecentLogResponse, error)
+	// Disable the Play Store for a lease (hold) or enable it again (release),
+	// so an auto-update of Play services cannot force-stop the app under test
+	// mid-job (sair#151); updates install between leases. Unimplemented for a
+	// phone without the Play Store or below Android 5, whose pm crashes on it;
+	// FailedPrecondition when the phone refuses (Xiaomi: "Cannot disable
+	// system packages").
+	HoldUpdates(context.Context, *HoldUpdatesRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedDeviceSourceServer()
 }
 
@@ -256,8 +356,20 @@ func (UnimplementedDeviceSourceServer) Wake(context.Context, *WakeRequest) (*emp
 func (UnimplementedDeviceSourceServer) RebootIfStale(context.Context, *RebootRequest) (*RebootResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RebootIfStale not implemented")
 }
+func (UnimplementedDeviceSourceServer) ResetBluetooth(context.Context, *ResetBluetoothRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetBluetooth not implemented")
+}
+func (UnimplementedDeviceSourceServer) RebootIfWedged(context.Context, *WedgedRadioRequest) (*RebootResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RebootIfWedged not implemented")
+}
+func (UnimplementedDeviceSourceServer) ClearUiAutomation(context.Context, *UiAutomationRequest) (*UiAutomationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClearUiAutomation not implemented")
+}
 func (UnimplementedDeviceSourceServer) RecentLog(context.Context, *RecentLogRequest) (*RecentLogResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecentLog not implemented")
+}
+func (UnimplementedDeviceSourceServer) HoldUpdates(context.Context, *HoldUpdatesRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method HoldUpdates not implemented")
 }
 func (UnimplementedDeviceSourceServer) mustEmbedUnimplementedDeviceSourceServer() {}
 func (UnimplementedDeviceSourceServer) testEmbeddedByValue()                      {}
@@ -399,6 +511,60 @@ func _DeviceSource_RebootIfStale_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DeviceSource_ResetBluetooth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetBluetoothRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).ResetBluetooth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_ResetBluetooth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).ResetBluetooth(ctx, req.(*ResetBluetoothRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DeviceSource_RebootIfWedged_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WedgedRadioRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).RebootIfWedged(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_RebootIfWedged_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).RebootIfWedged(ctx, req.(*WedgedRadioRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DeviceSource_ClearUiAutomation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UiAutomationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).ClearUiAutomation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_ClearUiAutomation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).ClearUiAutomation(ctx, req.(*UiAutomationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DeviceSource_RecentLog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RecentLogRequest)
 	if err := dec(in); err != nil {
@@ -413,6 +579,24 @@ func _DeviceSource_RecentLog_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(DeviceSourceServer).RecentLog(ctx, req.(*RecentLogRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DeviceSource_HoldUpdates_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HoldUpdatesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DeviceSourceServer).HoldUpdates(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DeviceSource_HoldUpdates_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DeviceSourceServer).HoldUpdates(ctx, req.(*HoldUpdatesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -445,8 +629,24 @@ var DeviceSource_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _DeviceSource_RebootIfStale_Handler,
 		},
 		{
+			MethodName: "ResetBluetooth",
+			Handler:    _DeviceSource_ResetBluetooth_Handler,
+		},
+		{
+			MethodName: "RebootIfWedged",
+			Handler:    _DeviceSource_RebootIfWedged_Handler,
+		},
+		{
+			MethodName: "ClearUiAutomation",
+			Handler:    _DeviceSource_ClearUiAutomation_Handler,
+		},
+		{
 			MethodName: "RecentLog",
 			Handler:    _DeviceSource_RecentLog_Handler,
+		},
+		{
+			MethodName: "HoldUpdates",
+			Handler:    _DeviceSource_HoldUpdates_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

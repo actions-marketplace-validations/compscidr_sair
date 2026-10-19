@@ -15,6 +15,10 @@ service Orchestrator {
   // each one as a guest key. Keys of other accounts, listed as guests or not,
   // and unknown keys both answer false; the proxy never learns which.
   rpc CheckKey(CheckKeyRequest) returns (CheckKeyResponse) {}
+  // Labels for a held lock, for roles a client only knows once the serials
+  // are granted (sair#141). Same labels as AcquireLockRequest.labels; a key
+  // set again replaces its value.
+  rpc AddLockLabels(AddLockLabelsRequest) returns (AddLockLabelsResponse) {}
   // One long-lived stream per proxy: version and identity first, then device
   // reports, lock heartbeats, lock log entries and bench events; the orchestrator pushes
   // lock expiry back. Replaces the periodic unary calls for proxies that use it.
@@ -115,7 +119,37 @@ message AcquireLockRequest {
   // adb reverse). False keeps the cross-proxy pick. Ignored by orchestrators
   // that predate it.
   bool same_proxy = 9;
+  // Which CI job holds the lock, for the CI health views (sair#141): the
+  // GitHub Actions job id (GITHUB_JOB), the run attempt, the commit and the
+  // workflow name. stage tells legs of a matrix job apart (free text, e.g.
+  // "api-34"); the stage key is job plus stage, and empty means job alone.
+  // All empty from clients and proxies that predate them: an "unstaged" lease.
+  string job = 10;
+  int32 run_attempt = 11;
+  string sha = 12;
+  string workflow = 13;
+  string stage = 14;
+  // Free-form labels the client sets; sair stores and shows them, nothing
+  // more. The proxy caps them in count and size.
+  repeated Label labels = 15;
+  // Branch under test (the PR head branch, else the pushed ref name), shown
+  // next to the repo. Empty from clients and proxies that predate it.
+  string branch = 16;
 }
+
+// A k=v label on a lock, or on one of its devices when serial is set.
+message Label {
+  string serial = 1;
+  string key = 2;
+  string value = 3;
+}
+
+message AddLockLabelsRequest {
+  string lock_id = 1;
+  repeated Label labels = 2;
+}
+
+message AddLockLabelsResponse {}
 
 message AcquireLockResponse {
   string lock_id = 1;
@@ -180,9 +214,14 @@ message LockHeartbeatResponse {
 
 message CheckKeyRequest {
   string api_key = 1;
+  // The proxy's guest keys (SAIR_GUEST_API_KEYS): api_key is also accepted
+  // when it is on the same account as one of these (sair#131). An older
+  // orchestrator ignores the field and checks the caller's account only.
+  repeated string guest_api_keys = 2;
 }
 
 message CheckKeyResponse {
+  // api_key is on the caller's account, or on a guest key's account.
   bool same_tenant = 1;
 }
 
