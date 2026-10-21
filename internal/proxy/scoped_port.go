@@ -232,7 +232,7 @@ func (m *ScopedPortManager) Acquire(ctx context.Context, requestedSerials map[st
 		mu.Lock()
 		m.cleanDevice(sp, serial, " (left by an earlier job)")
 		if _, fresh := m.btFresh.LoadAndDelete(serial); !fresh {
-			m.cycleBluetooth(sp, serial, " (no release reset since the last job)")
+			m.cycleBluetooth(sp, serial, " (no release reset since the last job)", true)
 		}
 		m.setUpdates(sp, serial, true)
 		err := m.wakeDevice(sp.LockID, serial)
@@ -443,23 +443,9 @@ func (m *ScopedPortManager) AddLabels(lockID string, labels []*pb.Label) error {
 // not supported: naming one is an error, and "all" skips them. band ("2.4",
 // "5", "6", or "" for any) pins the GHz band a phone joins on (sair#143).
 func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool, band string) error {
-	m.mu.Lock()
-	sp := m.scopedPorts[lockID]
-	m.mu.Unlock()
-	if sp == nil {
-		return errUnknownLock
-	}
-	if len(serials) == 0 {
-		for s := range sp.Serials {
-			if _, remote := sp.RemoteDevices[s]; !remote {
-				serials = append(serials, s)
-			}
-		}
-	}
-	for _, s := range serials {
-		if _, ok := sp.Serials[s]; !ok {
-			return fmt.Errorf("%w: %s", errNotInLock, s)
-		}
+	_, serials, err := m.lockDevices(lockID, serials)
+	if err != nil {
+		return err
 	}
 	state := dspb.WifiRequest_OFF
 	if on {
@@ -484,6 +470,57 @@ func (m *ScopedPortManager) SetWifi(lockID string, serials []string, on bool, ba
 		}
 	}
 	return nil
+}
+
+// lockDevices is lockID's port and the serials of it a mid-job call acts
+// on: serials as given, or every local device when empty. Naming a device
+// outside the lock is errNotInLock; relayed devices are never "all".
+func (m *ScopedPortManager) lockDevices(lockID string, serials []string) (*ScopedPort, []string, error) {
+	m.mu.Lock()
+	sp := m.scopedPorts[lockID]
+	m.mu.Unlock()
+	if sp == nil {
+		return nil, nil, errUnknownLock
+	}
+	if len(serials) == 0 {
+		for s := range sp.Serials {
+			if _, remote := sp.RemoteDevices[s]; !remote {
+				serials = append(serials, s)
+			}
+		}
+	}
+	for _, s := range serials {
+		if _, ok := sp.Serials[s]; !ok {
+			return nil, nil, fmt.Errorf("%w: %s", errNotInLock, s)
+		}
+	}
+	return sp, serials, nil
+}
+
+// RestartBluetooth cycles Bluetooth off and on, the same way the release
+// reset does, on serials of a lock (or all of its local devices) mid-job
+// (sair#156): a recovery test gets a stack restart with sair's wait for OFF
+// then ON instead of force-stopping com.android.bluetooth itself, which
+// races the bench's own cycle. The job keeps the lock either way; the
+// outcome is in its lock log. Unlike the reset, a wedged radio is not
+// rebooted mid-job: that is the release reset's call.
+func (m *ScopedPortManager) RestartBluetooth(lockID string, serials []string) error {
+	sp, serials, err := m.lockDevices(lockID, serials)
+	if err != nil {
+		return err
+	}
+	errs := make([]error, len(serials))
+	var wg sync.WaitGroup
+	for i, s := range serials {
+		wg.Go(func() {
+			mu := m.wifiLock(s)
+			mu.Lock()
+			defer mu.Unlock()
+			errs[i] = m.cycleBluetooth(sp, s, " (requested by the job)", false)
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 // resetDevices returns a closed port's devices to baseline: no reverse
@@ -546,7 +583,7 @@ func (m *ScopedPortManager) resetDevice(sp *ScopedPort, serial string) {
 		failed = true
 	}
 	// A fresh boot has a fresh Bluetooth stack.
-	if rebooted || !m.cycleBluetooth(sp, serial, "") {
+	if rebooted || m.cycleBluetooth(sp, serial, "", true) == nil {
 		m.btFresh.Store(serial, true)
 	} else {
 		failed = true
@@ -660,11 +697,12 @@ func (m *ScopedPortManager) cleanDevice(sp *ScopedPort, serial, note string) (fa
 // the device's warning on the device source, but does not cost the lock:
 // most jobs never touch Bluetooth. A relayed device, a phone without the
 // adapter dump and an older device source are skipped. The caller holds
-// the serial's lock. Returns whether it failed.
-func (m *ScopedPortManager) cycleBluetooth(sp *ScopedPort, serial, note string) (failed bool) {
+// the serial's lock. With mayReboot a wedged radio is rebooted and the
+// cycle run again (never mid-job). Returns the failure, nil when skipped.
+func (m *ScopedPortManager) cycleBluetooth(sp *ScopedPort, serial, note string, mayReboot bool) error {
 	start := time.Now()
 	err := m.resetBluetooth(serial)
-	if c := status.Code(err); err != nil && c != codes.NotFound && c != codes.Unimplemented && m.unwedge(sp, serial, "bluetooth", note) {
+	if c := status.Code(err); err != nil && c != codes.NotFound && c != codes.Unimplemented && mayReboot && m.unwedge(sp, serial, "bluetooth", note) {
 		start = time.Now()
 		err = m.resetBluetooth(serial)
 	}
@@ -672,12 +710,12 @@ func (m *ScopedPortManager) cycleBluetooth(sp *ScopedPort, serial, note string) 
 	case err == nil:
 		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: fmt.Sprintf("sair: Bluetooth cycled off and on (%s)%s", time.Since(start).Round(100*time.Millisecond), note)})
 	case c == codes.NotFound, c == codes.Unimplemented:
+		return nil
 	default:
 		slog.Warn("Bluetooth reset failed; the phone may have Bluetooth off", "serial", serial, "lockId", sp.LockID, "error", err)
 		sp.Log.Record(&pb.LockLogEntry{TimestampMs: time.Now().UnixMilli(), Serial: serial, Service: "sair: Bluetooth reset failed: " + errText(err) + note})
-		return true
 	}
-	return false
+	return err
 }
 
 // unwedge (sair#139) has the device source reboot a phone whose radio

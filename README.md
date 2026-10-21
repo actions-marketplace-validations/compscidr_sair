@@ -32,7 +32,7 @@ CI job 3 ···  Orchestrator: job 3 waits in the queue until
 ## GitHub Action
 
 This repo is also a GitHub Action that puts `sair-acquire`, `sair-release`,
-`sair-wifi`, `sair-locks` and `sair-label` on `PATH`. The tools need an orchestrator account: sign up at
+`sair-wifi`, `sair-bluetooth`, `sair-locks` and `sair-label` on `PATH`. The tools need an orchestrator account: sign up at
 [sair.run](https://sair.run) to get an API key, store it as the repository
 secret `SAIR_API_KEY`, and set the repository variable `SAIR_PROXY_URL` to
 your bench's proxy (see [Run](#run)). Then:
@@ -248,8 +248,19 @@ you:
   `sair: Bluetooth cycled off and on (…)`. A radio that does not go fully off
   or come back on is in the lock log and is the device's `warning` until a
   cycle succeeds, but does not fail the acquire, since most jobs never use
-  Bluetooth. Bluetooth is always left on. Phones without the adapter dump
+  Bluetooth. Bluetooth is always left on: a radio that never goes fully off
+  is still turned back on, and the line says so (`Bluetooth back on but never
+  fully off: ... adapter is BLE_ON`). Phones without the adapter dump
   (Android 4.x) are skipped.
+- **Mid-job**, `sair-bluetooth restart` runs the same cycle on the job's own
+  phones and returns once the adapter is `ON`, for a suite that tests
+  recovery from a Bluetooth stack restart (sair#156). A test that
+  force-stops `com.android.bluetooth` itself instead races the cycle sair ran
+  a minute earlier and gets stale adapter state. The lock log gets `sair:
+  Bluetooth cycled off and on (…) (requested by the job)`; a failure is
+  returned to the caller and the lock is kept. From the phone, a test calls
+  it with the lock's device token like Wi-Fi; see
+  [Device-side control](#device-side-control).
 - **No Play Store updates during a lease**: on acquire the Play Store is
   disabled (`pm disable-user com.android.vending`) and on release it is
   enabled again, so updates install between leases, when the phone is back
@@ -285,7 +296,7 @@ first log after the upgrade.
   offline or online. Each phone is switched on its own, so two phones can ask
   for opposite states at the same time.
 - **From the phone**, a test can toggle its own Wi-Fi between two assertions
-  with the lock's device token; see [Device-side Wi-Fi control](#device-side-wi-fi-control).
+  with the lock's device token; see [Device-side control](#device-side-control).
 
 **Online** means all of: associated to `WIFI_SSID` itself (not a SIM or a
 leftover network answering instead), that Wi-Fi is Android's validated default
@@ -504,7 +515,7 @@ the field and records the lock under the owner.
 
 On GitHub Actions, `uses: compscidr/sair@v0.0.21` (or any later release tag)
 puts the tools on `PATH`; see the workflow example below. Elsewhere, copy
-`tools/sair-acquire`, `tools/sair-release`, `tools/sair-wifi`, `tools/sair-locks` and `tools/sair-label` into your CI project or add this
+`tools/sair-acquire`, `tools/sair-release`, `tools/sair-wifi`, `tools/sair-bluetooth`, `tools/sair-locks` and `tools/sair-label` into your CI project or add this
 repo's `tools/` directory to `PATH`.
 
 **Acquire** a device lock (blocks until devices are available):
@@ -527,7 +538,7 @@ After eval, these environment variables are set:
 | `ANDROID_HOME` / `ANDROID_SDK_ROOT` | Shadow SDK under `$RUNNER_TEMP` (or `$TMPDIR`) whose `platform-tools/adb` calls the real adb with `-P <scoped port>`; only when an SDK was already set. Left in place so steps after `sair-release` keep working |
 | `ANDROID_SERIAL` | First serial (only set when a single device is acquired) |
 | `SAIR_PROXY_URL` | Proxy URL (for `sair-release`) |
-| `SAIR_DEVICE_TOKEN` / `SAIR_DEVICE_API_PORT` | Lock-scoped token and the port on each phone that reaches the proxy's `/wifi`; only when the proxy set them up. See [Device-side Wi-Fi control](#device-side-wi-fi-control) |
+| `SAIR_DEVICE_TOKEN` / `SAIR_DEVICE_API_PORT` | Lock-scoped token and the port on each phone that reaches the proxy's `/wifi` and `/bluetooth`; only when the proxy set them up. See [Device-side control](#device-side-control) |
 
 **Release** the lock when done:
 
@@ -572,6 +583,10 @@ sair-wifi off
 sair-wifi on
 sair-wifi on --band 5
 
+# Restart the Bluetooth stack mid-job, sair's own off-then-on cycle; returns
+# once the adapter is back on (all locked devices, or --serial)
+sair-bluetooth restart
+
 # Which release the tools (or a bench's binaries) came from
 sair-acquire --version
 sair-proxy --version   # also in the proxy's GET /status as "version"
@@ -590,7 +605,7 @@ sair-locks
 sair-locks --release-mine
 ```
 
-### Device-side Wi-Fi control
+### Device-side control
 
 Some tests know best when they need the network: this one needs Internet, the
 next one must not have it, and the switch has to happen between two assertions
@@ -599,7 +614,8 @@ acquire/release for every job, and the next job can read what was left
 behind), so a lock gets its own short-lived token instead.
 
 On acquire the proxy mints a random **device token**, valid only for `POST
-/wifi`, only for serials in that lock, and only until the lock ends. It also
+/wifi` and `POST /bluetooth`, only for serials in that lock, and only until the
+lock ends. It also
 runs `adb reverse tcp:<port> tcp:<port>` on each local phone, where `<port>` is
 the proxy's HTTP API port, so `127.0.0.1:<port>` on the phone reaches the proxy
 (this needs the proxy's HTTP API on the device source's host, which is the
@@ -632,6 +648,11 @@ fun sairWifi(on: Boolean) {
     check(conn.responseCode == 200) { "sair wifi: HTTP ${conn.responseCode}" }
 }
 ```
+
+`POST /bluetooth?lock_id=…&serial=…&action=restart` with the same header
+restarts the Bluetooth stack the way sair does on release and returns once the
+adapter is back `ON` (sair#156); a recovery test calls it instead of
+force-stopping `com.android.bluetooth` itself.
 
 This is plain HTTP to `127.0.0.1`, so the app under test must permit cleartext
 there: from targetSdk 28 the platform default refuses it with `Cleartext HTTP

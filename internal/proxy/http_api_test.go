@@ -515,3 +515,52 @@ func TestHTTPApiLabel(t *testing.T) {
 		t.Errorf("orchestrator got %v", got)
 	}
 }
+
+// /bluetooth takes the device token like /wifi (sair#156), restarts the
+// stack on the named phone, and refuses any action but restart.
+func TestHTTPApiBluetoothDeviceToken(t *testing.T) {
+	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
+	var calls []string
+	m.resetBluetooth = func(serial string) error { calls = append(calls, serial); return nil }
+	sp, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &HTTPApi{apiKey: "test-key", scopedPortManager: m}
+	post := func(path, token string) int {
+		req := httptest.NewRequest("POST", path, nil)
+		if token != "" {
+			req.Header.Set("x-device-token", token)
+		} else {
+			req.Header.Set("x-api-key", "test-key")
+		}
+		w := httptest.NewRecorder()
+		api.handleBluetooth(w, req)
+		return w.Code
+	}
+	bt := "/bluetooth?lock_id=L1&action=restart"
+	if got := post(bt+"&serial=A", "wrong"); got != http.StatusUnauthorized {
+		t.Errorf("wrong token: %d", got)
+	}
+	if got := post(bt, sp.DeviceToken); got != http.StatusBadRequest {
+		t.Errorf("token without serial: %d", got)
+	}
+	if got := post(bt+"&serial=B", sp.DeviceToken); got != http.StatusForbidden {
+		t.Errorf("serial outside lock: %d", got)
+	}
+	if got := post("/bluetooth?lock_id=L1&serial=A", sp.DeviceToken); got != http.StatusBadRequest {
+		t.Errorf("no action: %d", got)
+	}
+	if got := post(bt+"&serial=A", sp.DeviceToken); got != http.StatusOK {
+		t.Errorf("own serial: %d", got)
+	}
+	if got := post(bt, ""); got != http.StatusOK {
+		t.Errorf("api key, all devices: %d", got)
+	}
+	if got := post("/bluetooth?lock_id=L2&action=restart", ""); got != http.StatusNotFound {
+		t.Errorf("unknown lock: %d", got)
+	}
+	if want := []string{"A", "A"}; !slices.Equal(calls, want) {
+		t.Errorf("resets = %q, want %q", calls, want)
+	}
+}
