@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -280,4 +282,59 @@ func TestAcquireCleansUpWhatAnEarlierJobLeft(t *testing.T) {
 		t.Errorf("lock log = %v", entries)
 	}
 	m.CloseScopedPort("L1")
+}
+
+// A job can restart the Bluetooth stack on its phones mid-job (sair#156):
+// each phone is cycled on its own, the lock log says so, a failure is
+// returned but the lock is kept, and a wedged radio is never rebooted
+// mid-job, that is the release reset's call.
+func TestRestartBluetoothMidJob(t *testing.T) {
+	m := NewScopedPortManager(&CommandRouter{}, nil, 3600)
+	var mu sync.Mutex
+	var calls []string
+	hang := status.Error(codes.DeadlineExceeded, "B Bluetooth not back on within 30s: adapter is OFF")
+	m.resetBluetooth = func(serial string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, "bluetooth "+serial)
+		if serial == "B" {
+			return hang
+		}
+		return nil
+	}
+	m.rebootIfWedged = func(serial, _ string) (bool, error) { t.Errorf("rebooted %s mid-job", serial); return true, nil }
+	sp, err := m.CreateScopedPort("L1", map[string]struct{}{"A": {}, "B": {}, "R": {}}, map[string]*pb.DeviceInfo{"R": {Serial: "R"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RestartBluetooth("L1", []string{"A"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RestartBluetooth("L1", nil); !errors.Is(err, hang) {
+		t.Errorf("all: err = %v, want B's failure", err)
+	}
+	if err := m.RestartBluetooth("L1", []string{"R"}); err != nil {
+		t.Errorf("relayed device named: err = %v", err)
+	}
+	if err := m.RestartBluetooth("L1", []string{"C"}); !errors.Is(err, errNotInLock) {
+		t.Errorf("serial outside lock: err = %v", err)
+	}
+	if err := m.RestartBluetooth("nope", nil); !errors.Is(err, errUnknownLock) {
+		t.Errorf("unknown lock: err = %v", err)
+	}
+	sort.Strings(calls)
+	if want := []string{"bluetooth A", "bluetooth A", "bluetooth B", "bluetooth R"}; !reflect.DeepEqual(calls, want) {
+		t.Errorf("calls = %q, want %q", calls, want)
+	}
+	var lines []string
+	for _, e := range sp.Log.DrainAll() {
+		if strings.Contains(e.Service, "Bluetooth") {
+			lines = append(lines, e.Serial+": "+e.Service)
+		}
+	}
+	sort.Strings(lines)
+	if len(lines) != 4 || !strings.HasPrefix(lines[0], "A: sair: Bluetooth cycled off and on (") || !strings.HasSuffix(lines[0], ") (requested by the job)") ||
+		lines[2] != "B: sair: Bluetooth reset failed: B Bluetooth not back on within 30s: adapter is OFF (requested by the job)" {
+		t.Errorf("lock log Bluetooth lines = %q", lines)
+	}
 }

@@ -47,7 +47,14 @@ func (s *Server) ResetBluetooth(ctx context.Context, req *pb.ResetBluetoothReque
 		})
 	}
 	err = cmp.Or(onErr, offErr)
-	if err != nil {
+	switch {
+	case err == nil:
+	case onErr == nil:
+		// Back on, but the cycle was partial: the lock log should not read
+		// as if the phone were left at BLE_ON (sair#156).
+		off := status.Convert(offErr)
+		err = status.Errorf(off.Code(), "%s: Bluetooth back on but never fully off: %s", req.Serial, off.Message())
+	default:
 		if _, ok := status.FromError(err); !ok {
 			err = status.Errorf(codes.Internal, "%s: Bluetooth reset: %v", req.Serial, err)
 		}
@@ -108,7 +115,10 @@ func (s *Server) bluetoothOff(ctx context.Context, serial string) error {
 		}
 	}
 	if err := wait(s.bluetoothTimeout, "OFF"); err != nil {
-		return fmt.Errorf("%w (BLE apps: %s)", err, cmp.Or(strings.Join(apps, ", "), "none listed"))
+		// Not %w: a wrapped status reads "rpc error: code = ... desc = ..."
+		// in the lock log.
+		st := status.Convert(err)
+		return status.Errorf(st.Code(), "%s (BLE apps: %s)", st.Message(), cmp.Or(strings.Join(apps, ", "), "none listed"))
 	}
 	return nil
 }

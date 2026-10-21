@@ -147,6 +147,30 @@ func TestResetBluetoothWarnsWhenRadioStaysOff(t *testing.T) {
 	}
 }
 
+// A radio that never goes fully off is still turned back on; the error (and
+// the lock log line) says so, rather than reading as a phone left at BLE_ON
+// (sair#156).
+func TestResetBluetoothSaysBackOnWhenNeverFullyOff(t *testing.T) {
+	s := &Server{bluetoothTimeout: 10 * time.Millisecond}
+	// A sticky BLE app that no force-stop drops: the fake keeps it registered.
+	f := &fakeRadio{state: "ON", onGoesTo: "ON", stickyApps: []string{"com.example.holder"}}
+	f.install(s)
+	radio := s.shell
+	s.shell = func(ctx context.Context, serial, command string) (string, error) {
+		if strings.HasPrefix(command, "am force-stop ") {
+			return "", nil
+		}
+		return radio(ctx, serial, command)
+	}
+	_, err := s.ResetBluetooth(context.Background(), &pb.ResetBluetoothRequest{Serial: "A"})
+	if status.Code(err) != codes.DeadlineExceeded || !strings.Contains(err.Error(), "A: Bluetooth back on but never fully off: A Bluetooth not off within") || !strings.Contains(err.Error(), "BLE apps: com.example.holder") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.state != "ON" {
+		t.Errorf("state = %s, want ON", f.state)
+	}
+}
+
 // Android 4.2.2 has no bluetooth_manager dump: skipped, nothing toggled.
 func TestResetBluetoothUnimplementedWithoutAdapterState(t *testing.T) {
 	s := &Server{bluetoothTimeout: 10 * time.Millisecond}
