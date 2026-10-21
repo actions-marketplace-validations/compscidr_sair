@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# sair-bluetooth — Restart the Bluetooth stack on locked devices mid-job.
+#
+# The bench's own off-then-on cycle (`svc bluetooth disable`, wait until the
+# adapter is fully OFF, BLE included, `svc bluetooth enable`, wait for ON),
+# so a recovery test need not force-stop com.android.bluetooth itself and
+# race the cycle sair runs on acquire and release (sair#156). Returns once
+# the adapter is back ON. The job keeps its lock whatever happens; the
+# outcome is in the lock log.
+#
+# Usage:
+#   sair-bluetooth restart                     # all locked devices
+#   sair-bluetooth restart --serial DEVICE_A   # one device
+#
+# Environment variables (set by sair-acquire):
+#   SAIR_LOCK_ID     Lock holding the devices
+#   SAIR_PROXY_URL   Proxy HTTP API URL
+#   SAIR_API_KEY     API key for authentication
+#
+set -euo pipefail
+
+TOOLS_VERSION="dev" # release.yml stamps the release tag here
+
+PROXY_URL="${SAIR_PROXY_URL:-http://localhost:8550}"
+API_KEY="${SAIR_API_KEY:-dev-key-123}"
+LOCK_ID="${SAIR_LOCK_ID:-}"
+SERIAL=""
+ACTION=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        restart)
+            ACTION="$1"
+            shift
+            ;;
+        --serial)
+            SERIAL="$2"
+            shift 2
+            ;;
+        --lock-id)
+            LOCK_ID="$2"
+            shift 2
+            ;;
+        --url)
+            PROXY_URL="$2"
+            shift 2
+            ;;
+        --api-key)
+            API_KEY="$2"
+            shift 2
+            ;;
+        --version|-v)
+            # Stamped by release.yml; from the action, its ref; from a checkout at a tag, that tag.
+            [[ "$TOOLS_VERSION" != dev ]] || TOOLS_VERSION="${SAIR_TOOLS_VERSION:-$(git -C "$(dirname "$0")" describe --tags --exact-match 2>/dev/null || echo dev)}"
+            echo "$TOOLS_VERSION"
+            exit 0
+            ;;
+        --help|-h)
+            echo "Usage: sair-bluetooth restart [--serial SERIAL[,SERIAL...]] [--lock-id ID] [--url URL] [--api-key KEY] [--version]" >&2
+            echo "" >&2
+            echo "  restart  Cycle Bluetooth fully off and back on; returns once the adapter is ON" >&2
+            echo "" >&2
+            echo "Options:" >&2
+            echo "  --serial SERIAL  Device(s) of the lock to restart (default: all)" >&2
+            echo "  --lock-id ID     Lock holding the devices (default: \$SAIR_LOCK_ID)" >&2
+            echo "  --url URL        Proxy API URL (default: \$SAIR_PROXY_URL)" >&2
+            echo "  --api-key KEY    API key (default: \$SAIR_API_KEY or dev-key-123)" >&2
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$ACTION" ]]; then
+    echo "sair-bluetooth: ERROR: say restart" >&2
+    exit 1
+fi
+if [[ -z "$LOCK_ID" ]]; then
+    echo "sair-bluetooth: ERROR: no lock ID specified (set SAIR_LOCK_ID or use --lock-id)" >&2
+    exit 1
+fi
+
+echo "sair-bluetooth: restarting Bluetooth..." >&2
+CURL_ARGS=(-s -X POST -H "x-api-key: ${API_KEY}" -w '\n%{http_code}' -G
+    --data-urlencode "lock_id=${LOCK_ID}" --data-urlencode "action=${ACTION}")
+[[ -n "$SERIAL" ]] && CURL_ARGS+=(--data-urlencode "serial=${SERIAL}")
+RESPONSE=$(curl "${CURL_ARGS[@]}" "${PROXY_URL}/bluetooth") || {
+    echo "sair-bluetooth: ERROR: failed to contact proxy" >&2
+    exit 1
+}
+HTTP_STATUS=$(printf '%s\n' "$RESPONSE" | tail -n1)
+BODY=$(printf '%s\n' "$RESPONSE" | sed '$d')
+
+if [[ "$HTTP_STATUS" != "200" ]]; then
+    echo "sair-bluetooth: ERROR: HTTP ${HTTP_STATUS}: ${BODY}" >&2
+    exit 1
+fi
+echo "sair-bluetooth: Bluetooth back on" >&2

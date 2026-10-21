@@ -87,6 +87,7 @@ jobs:
           command -v sair-acquire
           command -v sair-release
           command -v sair-wifi
+          command -v sair-bluetooth
           command -v sair-locks
           command -v sair-label
 

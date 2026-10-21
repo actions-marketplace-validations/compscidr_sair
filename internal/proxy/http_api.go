@@ -70,6 +70,7 @@ func NewHTTPApi(scopedPortManager *ScopedPortManager, deviceListTracker *DeviceL
 	mux.HandleFunc("POST /acquire", api.handleAcquire)
 	mux.HandleFunc("POST /release", api.handleRelease)
 	mux.HandleFunc("POST /wifi", api.handleWifi)
+	mux.HandleFunc("POST /bluetooth", api.handleBluetooth)
 	mux.HandleFunc("POST /label", api.handleLabel)
 	mux.HandleFunc("GET /status", api.handleStatus)
 	mux.HandleFunc("POST /internal/devices", api.handleRegisterDevices)
@@ -423,29 +424,63 @@ func validWifiBand(v string) bool {
 	return v == "" || v == "2.4" || v == "5" || v == "6"
 }
 
-// handleWifi turns Wi-Fi on or off on a lock's devices mid-job, using the
-// bench network so the job never needs the credentials.
+// lockRequest authorizes a mid-job request on a lock's devices (/wifi,
+// /bluetooth) and reads which devices: lock_id, and serial (comma-separated;
+// empty is every local device of the lock). ok is false when the response
+// was already written.
 //
 // Besides the tenant key, a lock's device token (x-device-token) is accepted
 // here and nowhere else: it is what a test on a locked phone holds (sair#83).
 // It must name the serial, since the proxy cannot tell which phone a
 // reverse-forwarded connection came from.
-func (a *HTTPApi) handleWifi(w http.ResponseWriter, r *http.Request) {
+func (a *HTTPApi) lockRequest(w http.ResponseWriter, r *http.Request) (lockID string, serials []string, ok bool) {
 	q := r.URL.Query()
-	lockID := q.Get("lock_id")
+	lockID = q.Get("lock_id")
 	if lockID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lock_id parameter required"})
-		return
+		return "", nil, false
 	}
 	byToken := !a.requireAuth(r)
 	if byToken && !a.scopedPortManager.DeviceTokenValid(lockID, r.Header.Get("x-device-token")) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing x-api-key or x-device-token header"})
-		return
+		return "", nil, false
 	}
 	if byToken && strings.TrimSpace(q.Get("serial")) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "serial parameter required with x-device-token"})
+		return "", nil, false
+	}
+	for _, s := range strings.Split(q.Get("serial"), ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			serials = append(serials, s)
+		}
+	}
+	return lockID, serials, true
+}
+
+// writeLockResult answers a mid-job device request from its error.
+func writeLockResult(w http.ResponseWriter, lockID, what string, err error) {
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	case errors.Is(err, errUnknownLock):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+	case errors.Is(err, errNotInLock):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+	default:
+		code, msg := httpStatusForAcquireError(err)
+		slog.Error(what+" failed", "lockId", lockID, "error", err)
+		writeJSON(w, code, map[string]string{"error": msg})
+	}
+}
+
+// handleWifi turns Wi-Fi on or off on a lock's devices mid-job, using the
+// bench network so the job never needs the credentials.
+func (a *HTTPApi) handleWifi(w http.ResponseWriter, r *http.Request) {
+	lockID, serials, ok := a.lockRequest(w, r)
+	if !ok {
 		return
 	}
+	q := r.URL.Query()
 	on, ok := parseWifiState(q.Get("state"), false)
 	if !ok || q.Get("state") == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "state parameter must be on or off"})
@@ -456,26 +491,23 @@ func (a *HTTPApi) handleWifi(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "band parameter must be 2.4, 5 or 6, with state on"})
 		return
 	}
-	var serials []string
-	for _, s := range strings.Split(q.Get("serial"), ",") {
-		if s = strings.TrimSpace(s); s != "" {
-			serials = append(serials, s)
-		}
-	}
+	writeLockResult(w, lockID, "wifi change", a.scopedPortManager.SetWifi(lockID, serials, on, band))
+}
 
-	err := a.scopedPortManager.SetWifi(lockID, serials, on, band)
-	switch {
-	case err == nil:
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	case errors.Is(err, errUnknownLock):
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-	case errors.Is(err, errNotInLock):
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
-	default:
-		code, msg := httpStatusForAcquireError(err)
-		slog.Error("wifi change failed", "lockId", lockID, "error", err)
-		writeJSON(w, code, map[string]string{"error": msg})
+// handleBluetooth restarts the Bluetooth stack on a lock's devices mid-job
+// (action=restart), the bench's own off-then-on cycle, for a test that
+// exercises recovery from it (sair#156). Returns once the adapter is back
+// ON; the job keeps the lock whatever happens.
+func (a *HTTPApi) handleBluetooth(w http.ResponseWriter, r *http.Request) {
+	lockID, serials, ok := a.lockRequest(w, r)
+	if !ok {
+		return
 	}
+	if r.URL.Query().Get("action") != "restart" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action parameter must be restart"})
+		return
+	}
+	writeLockResult(w, lockID, "bluetooth restart", a.scopedPortManager.RestartBluetooth(lockID, serials))
 }
 
 func (a *HTTPApi) handleStatus(w http.ResponseWriter, r *http.Request) {
