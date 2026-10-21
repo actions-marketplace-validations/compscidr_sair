@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sair-bluetooth — Restart the Bluetooth stack on locked devices mid-job.
 #
-# The bench's own off-then-on cycle (`svc bluetooth disable`, wait until the
+# Runs the bench's own off-then-on cycle (`svc bluetooth disable`, wait until the
 # adapter is fully OFF, BLE included, `svc bluetooth enable`, wait for ON),
 # so a recovery test need not force-stop com.android.bluetooth itself and
 # race the cycle sair runs on acquire and release (sair#156). Returns once
